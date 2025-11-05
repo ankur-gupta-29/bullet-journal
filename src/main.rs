@@ -3,12 +3,18 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate, NaiveTime};
 use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 
 #[derive(Parser)]
-#[command(name = "bj", version, about = "Bullet journal CLI")] 
+#[command(
+    name = "bj",
+    version,
+    about = "Bullet journal CLI",
+    long_about = "A fast terminal bullet journal that stores Markdown per day.\n\nFeatures:\n- Add/list/done/migrate bullets with priority, tags, notes\n- Week and month calendar views\n- Meetings: add/list/notify with start time and duration\n- Optional daily and meeting notifications (systemd user timers)",
+    after_help = "Examples:\n  bj add \"Draft project plan\"\n  bj add -p high -t work -n \"prep\" \"Release train\"\n  bj list -t work -p 3\n  bj done 2\n  bj migrate --from 2025-11-04\n  bj week -t work\n  bj cal\n  bj meeting add -t 15:00 -u 30 \"Team sync\"\n  bj meeting list\n  bj meeting notify -w 15"
+)] 
 struct Cli {
 	#[command(subcommand)]
 	action: Action,
@@ -71,6 +77,51 @@ enum Action {
 		#[arg(short = 'p', long = "priority")]
 		priority: Option<String>,
 	},
+	/// Manage meetings: add/list/notify
+	Meeting {
+		#[command(subcommand)]
+		cmd: MeetingCmd,
+	},
+	/// Show a month calendar with markers for bullets/meetings
+	Cal {
+		/// Any date in the month (default today)
+		#[arg(short = 'd', long = "date")]
+		date: Option<String>,
+	},
+}
+
+#[derive(Subcommand)]
+enum MeetingCmd {
+	/// Add a meeting
+	Add {
+		/// Title
+		title: Vec<String>,
+		/// Date YYYY-MM-DD (default: today)
+		#[arg(short = 'd', long = "date")]
+		date: Option<String>,
+		/// Start time HH:MM (24h)
+		#[arg(short = 't', long = "time")]
+		time: String,
+		/// Duration minutes
+		#[arg(short = 'u', long = "duration", default_value_t = 60)]
+		duration: u32,
+		/// Tags
+		#[arg(short = 'g', long = "tag")]
+		tags: Vec<String>,
+		/// Notes
+		#[arg(short = 'n', long = "note")]
+		notes: Vec<String>,
+	},
+	/// List meetings for a date (default today)
+	List {
+		#[arg(short = 'd', long = "date")]
+		date: Option<String>,
+	},
+	/// Send notifications for meetings starting within N minutes (default 15)
+	Notify {
+		#[arg(short = 'w', long = "window", default_value_t = 15)]
+		window_minutes: i64,
+	},
 }
 
 fn main() -> Result<()> {
@@ -104,6 +155,24 @@ fn main() -> Result<()> {
 			let base = parse_or_today(date.as_deref())?;
 			let pr = parse_priority_opt(priority.as_deref())?;
 			week_view(base, &tags, pr)?
+		}
+		Action::Meeting { cmd } => match cmd {
+			MeetingCmd::Add { title, date, time, duration, tags, notes } => {
+				let date = parse_or_today(date.as_deref())?;
+				let time = NaiveTime::parse_from_str(&time, "%H:%M").with_context(|| format!("invalid time: {}", time))?;
+				add_meeting(date, time, duration, &title.join(" "), &tags, &notes)?
+			}
+			MeetingCmd::List { date } => {
+				let date = parse_or_today(date.as_deref())?;
+				list_meetings(date)?
+			}
+			MeetingCmd::Notify { window_minutes } => {
+				notify_upcoming_meetings(window_minutes)?
+			}
+		},
+		Action::Cal { date } => {
+			let base = parse_or_today(date.as_deref())?;
+			month_calendar(base)?
 		}
 	}
 	Ok(())
@@ -142,6 +211,8 @@ struct Bullet {
 	priority: Option<u8>,
 	tags: Vec<String>,
 	notes: Vec<String>,
+	meeting_time: Option<NaiveTime>,
+	meeting_duration_min: Option<u32>,
 }
 
 fn read_file_lines(path: &Path) -> Result<Vec<String>> {
@@ -170,14 +241,14 @@ fn parse_bullets(lines: &[String]) -> Vec<Bullet> {
 		let trimmed = line.trim_start();
 		if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
 			visible += 1;
-			let (text, pr, tags) = parse_text_meta(rest);
+			let (text, pr, tags, mt, dur) = parse_text_meeting_meta(rest);
 			let notes = collect_notes(lines, idx + 1);
-			out.push(Bullet { line_index: idx, visible_index: visible, completed: false, text, priority: pr, tags, notes });
+			out.push(Bullet { line_index: idx, visible_index: visible, completed: false, text, priority: pr, tags, notes, meeting_time: mt, meeting_duration_min: dur });
 		} else if let Some(rest) = trimmed.strip_prefix("- [x] ") {
 			visible += 1;
-			let (text, pr, tags) = parse_text_meta(rest);
+			let (text, pr, tags, mt, dur) = parse_text_meeting_meta(rest);
 			let notes = collect_notes(lines, idx + 1);
-			out.push(Bullet { line_index: idx, visible_index: visible, completed: true, text, priority: pr, tags, notes });
+			out.push(Bullet { line_index: idx, visible_index: visible, completed: true, text, priority: pr, tags, notes, meeting_time: mt, meeting_duration_min: dur });
 		}
 		idx += 1;
 	}
@@ -198,7 +269,7 @@ fn collect_notes(lines: &[String], mut from: usize) -> Vec<String> {
 	notes
 }
 
-fn parse_text_meta(rest: &str) -> (String, Option<u8>, Vec<String>) {
+fn parse_text_meta_only(rest: &str) -> (String, Option<u8>, Vec<String>) {
 	let mut text = rest.to_string();
 	let mut pr = None;
 	if let Some(stripped) = text.strip_prefix("(!!!) ") {
@@ -225,6 +296,27 @@ fn parse_text_meta(rest: &str) -> (String, Option<u8>, Vec<String>) {
 	(final_text, pr, tags)
 }
 
+fn parse_text_meeting_meta(rest: &str) -> (String, Option<u8>, Vec<String>, Option<NaiveTime>, Option<u32>) {
+	let mut remaining = rest.to_string();
+	let mut meeting_time: Option<NaiveTime> = None;
+	let mut duration: Option<u32> = None;
+	// Meeting prefix format: [mtg HH:MM] or [mtg HH:MM D]
+	if let Some(body) = remaining.strip_prefix("[mtg ") {
+		if let Some(close_idx) = body.find(']') {
+			let spec = &body[..close_idx];
+			let after = &body[close_idx+1..];
+			let parts: Vec<&str> = spec.split_whitespace().collect();
+			if !parts.is_empty() {
+				if let Ok(t) = NaiveTime::parse_from_str(parts[0], "%H:%M") { meeting_time = Some(t); }
+				if parts.len() > 1 { if let Ok(d) = parts[1].parse::<u32>() { duration = Some(d); } }
+			}
+			remaining = after.trim_start().to_string();
+		}
+	}
+	let (text, pr, tags) = parse_text_meta_only(&remaining);
+	(text, pr, tags, meeting_time, duration)
+}
+
 fn add_bullet(date: NaiveDate, text: &str, priority: Option<u8>, tags: &[String], notes: &[String]) -> Result<()> {
 	let path = file_for(date)?;
 	let mut lines = read_file_lines(&path)?;
@@ -249,6 +341,69 @@ fn add_bullet(date: NaiveDate, text: &str, priority: Option<u8>, tags: &[String]
 	Ok(())
 }
 
+fn add_meeting(date: NaiveDate, time: NaiveTime, duration_min: u32, title: &str, tags: &[String], notes: &[String]) -> Result<()> {
+	let mut mt_prefix = format!("[mtg {} {}] ", time.format("%H:%M"), duration_min);
+	let full = format!("{}{}", mt_prefix, title);
+	add_bullet(date, &full, None, tags, notes)
+}
+
+fn list_meetings(date: NaiveDate) -> Result<()> {
+	let path = file_for(date)?;
+	let lines = read_file_lines(&path)?;
+	let mut bullets = parse_bullets(&lines)
+		.into_iter()
+		.filter(|b| b.meeting_time.is_some())
+		.collect::<Vec<_>>();
+	if bullets.is_empty() { println!("No meetings for {}", date); return Ok(()); }
+	bullets.sort_by_key(|b| b.meeting_time);
+	for b in bullets {
+		let t = b.meeting_time.unwrap();
+		let dur = b.meeting_duration_min.unwrap_or(60);
+		println!("{} {:>5} ({}m) {}", date, t.format("%H:%M"), dur, b.text);
+	}
+	Ok(())
+}
+
+fn notified_state_path() -> Result<PathBuf> { Ok(data_dir()?.join("notified.meetings")) }
+
+fn notify_upcoming_meetings(window_minutes: i64) -> Result<()> {
+	let today = Local::now().date_naive();
+	let now = Local::now().time();
+	let path = file_for(today)?;
+	let lines = read_file_lines(&path)?;
+	let bullets = parse_bullets(&lines);
+	let mut state_path = notified_state_path()?;
+	let mut sent = std::collections::HashSet::new();
+	if state_path.exists() {
+		let s = fs::read_to_string(&state_path).unwrap_or_default();
+		for line in s.lines() { sent.insert(line.to_string()); }
+	}
+	let mut new_sent: Vec<String> = Vec::new();
+	for b in bullets {
+		let Some(t) = b.meeting_time else { continue };
+		let start_key = format!("{}|{}", today, t.format("%H:%M"));
+		if sent.contains(&start_key) { continue; }
+		let diff = (t - now).num_minutes();
+		if diff >= 0 && diff <= window_minutes {
+			let title = "Upcoming meeting";
+			let msg = format!("{} at {} (in {} min)", b.text, t.format("%H:%M"), diff);
+			if which::which("notify-send").is_ok() {
+				let _ = std::process::Command::new("notify-send").arg(title).arg(msg).status();
+			} else {
+				println!("{}: {}", title, msg);
+			}
+			new_sent.push(start_key);
+		}
+	}
+	if !new_sent.is_empty() {
+		let mut contents = String::new();
+		for k in sent { contents.push_str(&format!("{}\n", k)); }
+		for k in new_sent { contents.push_str(&format!("{}\n", k)); }
+		fs::write(&state_path, contents).ok();
+	}
+	Ok(())
+}
+
 fn list_bullets(date: NaiveDate, filter_tags: &[String], filter_priority: Option<u8>) -> Result<()> {
 	let path = file_for(date)?;
 	let lines = read_file_lines(&path)?;
@@ -264,8 +419,10 @@ fn list_bullets(date: NaiveDate, filter_tags: &[String], filter_priority: Option
 		}
 		let status = if b.completed { "x" } else { " " };
 		let pr = match b.priority { Some(3) => "(!!!) ", Some(2) => "(!!) ", Some(1) => "(!) ", _ => "" };
+		let mut time_prefix = String::new();
+		if let Some(t) = b.meeting_time { time_prefix = format!("[mtg {}] ", t.format("%H:%M")); }
 		let tags = if b.tags.is_empty() { String::new() } else { format!(" {}", b.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")) };
-		println!("{:>3}. [{}] {}{}{}", b.visible_index, status, pr, b.text, tags);
+		println!("{:>3}. [{}] {}{}{}{}", b.visible_index, status, pr, time_prefix, b.text, tags);
 		for n in &b.notes {
 			println!("     ↳ {}", n);
 		}
@@ -303,8 +460,12 @@ fn migrate_open_to_today(from: NaiveDate) -> Result<()> {
 		if !b.completed {
 			let raw = from_lines[b.line_index].clone();
 			let text = raw.trim_start().trim_start_matches("- [ ] ").to_string();
-			let (text, pr, tags) = parse_text_meta(&text);
-			add_bullet(to, &text, pr, &tags, &[])?;
+			let (text, pr, tags, mt, dur) = parse_text_meeting_meta(&text);
+			// Preserve meeting marker if present by reconstructing text with meeting prefix
+			let mut full_text = String::new();
+			if let Some(t) = mt { full_text.push_str(&format!("[mtg {}{}] ", t.format("%H:%M"), dur.map(|d| format!(" {}", d)).unwrap_or_default())); }
+			full_text.push_str(&text);
+			add_bullet(to, &full_text, pr, &tags, &[])?;
 			from_lines.remove(b.line_index);
 			moved_any = true;
 		}
@@ -360,10 +521,36 @@ fn week_view(base: NaiveDate, filter_tags: &[String], filter_priority: Option<u8
 			}
 			let status = if b.completed { "x" } else { " " };
 			let pr = match b.priority { Some(3) => "(!!!) ", Some(2) => "(!!) ", Some(1) => "(!) ", _ => "" };
+			let mut time_prefix = String::new();
+			if let Some(t) = b.meeting_time { time_prefix = format!("[mtg {}] ", t.format("%H:%M")); }
 			let tags = if b.tags.is_empty() { String::new() } else { format!(" {}", b.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")) };
-			println!(" - [{}] {}{}{}", status, pr, b.text, tags);
+			println!(" - [{}] {}{}{}{}", status, pr, time_prefix, b.text, tags);
 			for n in &b.notes { println!("   ↳ {}", n); }
 		}
 	}
+	Ok(())
+}
+
+fn month_calendar(base: NaiveDate) -> Result<()> {
+	let first = NaiveDate::from_ymd_opt(base.year(), base.month(), 1).context("invalid month")?;
+	let next_month = if base.month() == 12 { NaiveDate::from_ymd_opt(base.year()+1, 1, 1).unwrap() } else { NaiveDate::from_ymd_opt(base.year(), base.month()+1, 1).unwrap() };
+	let last_day = (next_month - chrono::Days::new(1)).day();
+	println!("{}-{:02}", base.year(), base.month());
+	println!("Mo Tu We Th Fr Sa Su");
+	let offset = first.weekday().num_days_from_monday();
+	let mut d = 1u32;
+	for i in 0..offset { if i==0 { print!("") } print!("   "); }
+	while d <= last_day {
+		let cur = NaiveDate::from_ymd_opt(base.year(), base.month(), d).unwrap();
+		let path = file_for(cur)?;
+		let lines = read_file_lines(&path)?;
+		let bullets = parse_bullets(&lines);
+		let mark = if bullets.iter().any(|b| b.meeting_time.is_some()) { '*' } else if bullets.iter().any(|b| !b.completed) { '+' } else if !bullets.is_empty() { '.' } else { ' ' };
+		print!("{:>2}{} ", d, mark);
+		if cur.weekday().number_from_monday() == 7 { println!(); }
+		d += 1;
+	}
+	println!();
+	println!("legend: * meeting, + open bullets, . only done, ' ' empty");
 	Ok(())
 }
