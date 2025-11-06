@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use chrono::{Datelike, Local, NaiveDate, NaiveTime};
+use colored::Colorize;
 use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 
@@ -12,8 +13,8 @@ use directories::ProjectDirs;
     name = "bj",
     version,
     about = "Bullet journal CLI",
-    long_about = "A fast terminal bullet journal that stores Markdown per day.\n\nFeatures:\n- Add/list/done/migrate bullets with priority, tags, notes\n- Week and month calendar views\n- Meetings: add/list/notify with start time and duration\n- Optional daily and meeting notifications (systemd user timers)",
-    after_help = "Examples:\n  bj add \"Draft project plan\"\n  bj add -p high -t work -n \"prep\" \"Release train\"\n  bj list -t work -p 3\n  bj done 2\n  bj migrate --from 2025-11-04\n  bj week -t work\n  bj cal\n  bj meeting add -t 15:00 -u 30 \"Team sync\"\n  bj meeting list\n  bj meeting notify -w 15"
+    long_about = "A fast terminal bullet journal that stores Markdown per day.\n\nFeatures:\n- Add/list/done/delete/migrate bullets with priority, tags, notes\n- Week and month calendar views\n- Meetings: add/list/notify with start time and duration\n- Optional daily and meeting notifications (systemd user timers)",
+    after_help = "Examples:\n  bj add \"Draft project plan\"\n  bj add -p high -t work -n \"prep\" \"Release train\"\n  bj list -t work -p 3\n  bj done 2\n  bj delete 3\n  bj migrate --from 2025-11-04\n  bj migrate --from 2025-11-04 --to 2025-11-10\n  bj migrate --from 2025-11-04 --to 2025-11-10 --id 2\n  bj week -t work\n  bj cal\n  bj meeting add -t 15:00 -u 30 \"Team sync\"\n  bj meeting list\n  bj meeting notify -w 15"
 )] 
 struct Cli {
 	#[command(subcommand)]
@@ -59,11 +60,25 @@ enum Action {
 		#[arg(short = 'd', long = "date")]
 		date: Option<String>,
 	},
-	/// Migrate all open bullets from a date to today (default: from yesterday)
+	/// Delete a bullet or meeting by ID for a date (default today)
+	Delete {
+		/// Bullet or meeting ID (1-based visible index)
+		id: usize,
+		/// Date YYYY-MM-DD (default: today)
+		#[arg(short = 'd', long = "date")]
+		date: Option<String>,
+	},
+	/// Migrate all open bullets from a date to another date (default: from yesterday to today)
 	Migrate {
 		/// Source date YYYY-MM-DD (default: yesterday)
 		#[arg(long = "from")]
 		from: Option<String>,
+		/// Target date YYYY-MM-DD (default: today)
+		#[arg(long = "to")]
+		to: Option<String>,
+		/// Optional bullet ID to migrate (1-based). If omitted, all open bullets are migrated.
+		#[arg(long = "id")]
+		id: Option<usize>,
 	},
 	/// Show a weekly view for the week containing date (default: today)
 	Week {
@@ -141,7 +156,11 @@ fn main() -> Result<()> {
 			let date = parse_or_today(date.as_deref())?;
 			mark_done(date, id)?
 		}
-		Action::Migrate { from } => {
+		Action::Delete { id, date } => {
+			let date = parse_or_today(date.as_deref())?;
+			delete_bullet(date, id)?
+		}
+		Action::Migrate { from, to, id } => {
 			let from_date = match from {
 				Some(d) => parse_date(&d)?,
 				None => {
@@ -149,7 +168,12 @@ fn main() -> Result<()> {
 					today.pred_opt().context("cannot compute yesterday")?
 				}
 			};
-			migrate_open_to_today(from_date)?
+			let to_date = parse_or_today(to.as_deref())?;
+			if let Some(bid) = id {
+				migrate_one(from_date, to_date, bid)?;
+			} else {
+				migrate_open(from_date, to_date)?;
+			}
 		}
 		Action::Week { date, tags, priority } => {
 			let base = parse_or_today(date.as_deref())?;
@@ -364,6 +388,33 @@ fn list_meetings(date: NaiveDate) -> Result<()> {
 	Ok(())
 }
 
+fn migrate_one(from: NaiveDate, to: NaiveDate, id: usize) -> Result<()> {
+	if from == to { bail!("from and to dates are the same; nothing to migrate"); }
+	let from_path = file_for(from)?;
+	let mut from_lines = read_file_lines(&from_path)?;
+	let bullets = parse_bullets(&from_lines);
+	let Some(target) = bullets.iter().find(|b| b.visible_index == id) else { bail!("bullet {} not found on {}", id, from) };
+	if target.completed { bail!("bullet {} is already completed", id); }
+	// reconstruct text without leading marker
+	let raw = from_lines[target.line_index].clone();
+	let text = raw.trim_start().trim_start_matches("- [ ] ").to_string();
+	let (text, pr, tags, mt, dur) = parse_text_meeting_meta(&text);
+	let mut full_text = String::new();
+	if let Some(t) = mt { full_text.push_str(&format!("[mtg {}{}] ", t.format("%H:%M"), dur.map(|d| format!(" {}", d)).unwrap_or_default())); }
+	full_text.push_str(&text);
+	add_bullet(to, &full_text, pr, &tags, &[])?;
+	from_lines.remove(target.line_index);
+	write_file_lines(&from_path, &from_lines)?;
+	println!("{}", format!("Migrated bullet {} from {} to {}", id, from, to).green());
+	Ok(())
+}
+
+// Backward compatibility wrapper
+fn migrate_one_to_today(from: NaiveDate, id: usize) -> Result<()> {
+	let to = Local::now().date_naive();
+	migrate_one(from, to, id)
+}
+
 fn notified_state_path() -> Result<PathBuf> { Ok(data_dir()?.join("notified.meetings")) }
 
 fn notify_upcoming_meetings(window_minutes: i64) -> Result<()> {
@@ -408,25 +459,139 @@ fn list_bullets(date: NaiveDate, filter_tags: &[String], filter_priority: Option
 	let path = file_for(date)?;
 	let lines = read_file_lines(&path)?;
 	let bullets = parse_bullets(&lines);
+	
 	if bullets.is_empty() {
-		println!("No bullets for {}", date);
+		println!("\n{} {}", "📭".normal(), format!("No bullets for {}", date).dimmed());
 		return Ok(());
 	}
+	
+	// Get today's date to show relative dates
+	let today = Local::now().date_naive();
+	let date_display = if date == today {
+		format!("{} Today", "📅".normal())
+	} else if date == today.pred_opt().unwrap_or(date) {
+		format!("{} Yesterday", "📅".normal())
+	} else if date == today.succ_opt().unwrap_or(date) {
+		format!("{} Tomorrow", "📅".normal())
+	} else {
+		format!("{} {}", "📅".normal(), date.format("%A, %B %d, %Y"))
+	};
+	
+	// Count tasks
+	let total = bullets.len();
+	let completed = bullets.iter().filter(|b| b.completed).count();
+	let meetings = bullets.iter().filter(|b| b.meeting_time.is_some()).count();
+	
+	// Box width
+	let box_width = 61;
+	
+	// Format date display without ANSI codes for width calculation
+	let date_text = if date == today {
+		"📅 Today".to_string()
+	} else if date == today.pred_opt().unwrap_or(date) {
+		"📅 Yesterday".to_string()
+	} else if date == today.succ_opt().unwrap_or(date) {
+		"📅 Tomorrow".to_string()
+	} else {
+		format!("📅 {}", date.format("%A, %B %d, %Y"))
+	};
+	
+	// Calculate padding for date line (accounting for emoji being 2 chars wide visually)
+	let date_visual_len = date_text.chars().count() + 1; // +1 for emoji extra width
+	let date_padding = if date_visual_len < box_width { box_width - date_visual_len } else { 0 };
+	
+	// Format stats line
+	let stats_text = format!("✓ {}/{} completed  🗓 {} meetings", completed, total, meetings);
+	let stats_visual_len = stats_text.chars().count() + 2; // +2 for two emojis
+	let stats_padding = if stats_visual_len < box_width { box_width - stats_visual_len } else { 0 };
+	
+	// Header
+	println!("\n┌─────────────────────────────────────────────────────────────┐");
+	println!("│ {}{:width$}│", date_text.bold(), "", width = date_padding);
+	println!("│ {}{:width$}│", 
+		format!("{} {}/{} completed  {} {} meetings", 
+			"✓".green(), 
+			completed.to_string().normal(),
+			total.to_string().normal(),
+			"🗓".normal(),
+			meetings.to_string().normal()
+		),
+		"",
+		width = stats_padding
+	);
+	println!("└─────────────────────────────────────────────────────────────┘");
+	println!();
+	
 	for b in bullets {
-		if let Some(p) = filter_priority { if b.priority != Some(p) { continue; } }
-		if !filter_tags.is_empty() {
-			if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { continue; }
+		// Apply filters
+		if let Some(p) = filter_priority { 
+			if b.priority != Some(p) { continue; } 
 		}
-		let status = if b.completed { "x" } else { " " };
-		let pr = match b.priority { Some(3) => "(!!!) ", Some(2) => "(!!) ", Some(1) => "(!) ", _ => "" };
-		let mut time_prefix = String::new();
-		if let Some(t) = b.meeting_time { time_prefix = format!("[mtg {}] ", t.format("%H:%M")); }
-		let tags = if b.tags.is_empty() { String::new() } else { format!(" {}", b.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")) };
-		println!("{:>3}. [{}] {}{}{}{}", b.visible_index, status, pr, time_prefix, b.text, tags);
+		if !filter_tags.is_empty() {
+			if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { 
+				continue; 
+			}
+		}
+		
+		// Status icon and checkbox
+		let (status_icon, checkbox) = if b.completed { 
+			("✓".green(), "[✓]".green().dimmed())
+		} else { 
+			("○".yellow(), "[ ]".yellow())
+		};
+		
+		// Priority indicator
+		let priority_str = match b.priority {
+			Some(3) => " 🔴 HIGH ".red().bold(),
+			Some(2) => " 🟡 MED  ".yellow(),
+			Some(1) => " 🟢 LOW  ".bright_green(),
+			_ => "        ".normal(),
+		};
+		
+		// Meeting time
+		let time_str = if let Some(t) = b.meeting_time {
+			format!(" 🕐 {} ", t.format("%H:%M")).cyan().bold()
+		} else {
+			"         ".normal()
+		};
+		
+		// Tags
+		let tags_str = if b.tags.is_empty() { 
+			String::new() 
+		} else { 
+			format!(" {}", b.tags.iter()
+				.map(|t| format!("#{}", t))
+				.collect::<Vec<_>>()
+				.join(" "))
+		};
+		let tags_colored = tags_str.blue();
+		
+		// Index
+		let idx = format!("{:>2}.", b.visible_index).bright_black();
+		
+		// Main line with text (dim if completed)
+		let text_display = if b.completed {
+			b.text.dimmed()
+		} else {
+			b.text.normal()
+		};
+		
+		println!("{} {} {}{}{} {}", 
+			idx, 
+			checkbox,
+			priority_str,
+			time_str,
+			text_display,
+			tags_colored
+		);
+		
+		// Notes with better indentation
 		for n in &b.notes {
-			println!("     ↳ {}", n);
+			println!("      {} {}", "↳".bright_black(), n.dimmed());
 		}
 	}
+	
+	println!();
 	Ok(())
 }
 
@@ -449,9 +614,45 @@ fn mark_done(date: NaiveDate, id: usize) -> Result<()> {
 	Ok(())
 }
 
-fn migrate_open_to_today(from: NaiveDate) -> Result<()> {
-	let to = Local::now().date_naive();
-	if from == to { bail!("from date is today; nothing to migrate"); }
+fn delete_bullet(date: NaiveDate, id: usize) -> Result<()> {
+	let path = file_for(date)?;
+	let mut lines = read_file_lines(&path)?;
+	let bullets = parse_bullets(&lines);
+	let Some(target) = bullets.iter().find(|b| b.visible_index == id) else { bail!("bullet {} not found", id) };
+	
+	// Get the text for confirmation message before deleting
+	let bullet_text = target.text.clone();
+	
+	// Remove the bullet line and any associated note lines
+	let mut lines_to_remove = vec![target.line_index];
+	
+	// Find note lines that belong to this bullet (indented lines immediately following)
+	for i in (target.line_index + 1)..lines.len() {
+		let line = &lines[i];
+		if line.trim().is_empty() {
+			// Empty line might separate bullets, keep looking
+			continue;
+		} else if line.starts_with("  ") && !line.trim_start().starts_with("- ") {
+			// This is an indented note line
+			lines_to_remove.push(i);
+		} else {
+			// Hit the next bullet or non-note content
+			break;
+		}
+	}
+	
+	// Remove lines in reverse order to maintain indices
+	for &idx in lines_to_remove.iter().rev() {
+		lines.remove(idx);
+	}
+	
+	write_file_lines(&path, &lines)?;
+	println!("Deleted: {} #{} - \"{}\"", date, id, bullet_text);
+	Ok(())
+}
+
+fn migrate_open(from: NaiveDate, to: NaiveDate) -> Result<()> {
+	if from == to { bail!("from and to dates are the same; nothing to migrate"); }
 	let from_path = file_for(from)?;
 	let mut from_lines = read_file_lines(&from_path)?;
 	let bullets = parse_bullets(&from_lines);
@@ -477,6 +678,12 @@ fn migrate_open_to_today(from: NaiveDate) -> Result<()> {
 		println!("No open bullets to migrate from {}", from);
 	}
 	Ok(())
+}
+
+// Backward compatibility wrapper
+fn migrate_open_to_today(from: NaiveDate) -> Result<()> {
+	let to = Local::now().date_naive();
+	migrate_open(from, to)
 }
 
 fn parse_priority_opt(v: Option<&str>) -> Result<Option<u8>> {
@@ -513,7 +720,7 @@ fn week_view(base: NaiveDate, filter_tags: &[String], filter_priority: Option<u8
 			}
 			if b.completed { count_done += 1; } else { count_open += 1; }
 		}
-		println!("Open: {}, Done: {}", count_open, count_done);
+			println!("{}", format!("Open: {}, Done: {}", count_open, count_done).cyan());
 		for b in bullets {
 			if let Some(p) = filter_priority { if b.priority != Some(p) { continue; } }
 			if !filter_tags.is_empty() {
@@ -524,7 +731,11 @@ fn week_view(base: NaiveDate, filter_tags: &[String], filter_priority: Option<u8
 			let mut time_prefix = String::new();
 			if let Some(t) = b.meeting_time { time_prefix = format!("[mtg {}] ", t.format("%H:%M")); }
 			let tags = if b.tags.is_empty() { String::new() } else { format!(" {}", b.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")) };
-			println!(" - [{}] {}{}{}{}", status, pr, time_prefix, b.text, tags);
+			let status_colored = if b.completed { "[x]".dimmed() } else { "[ ]".yellow() };
+			let pr_colored = match b.priority { Some(3) => "(!!!) ".red().bold(), Some(2) => "(!!) ".red(), Some(1) => "(!) ".yellow(), _ => "".normal() };
+			let time_col = if b.meeting_time.is_some() { time_prefix.green() } else { time_prefix.normal() };
+			let tags_col = if b.tags.is_empty() { tags.normal() } else { tags.blue() };
+			println!(" - {} {}{}{}{}", status_colored, pr_colored, time_col, b.text, tags_col);
 			for n in &b.notes { println!("   ↳ {}", n); }
 		}
 	}
@@ -532,25 +743,551 @@ fn week_view(base: NaiveDate, filter_tags: &[String], filter_priority: Option<u8
 }
 
 fn month_calendar(base: NaiveDate) -> Result<()> {
+	let today = Local::now().date_naive();
 	let first = NaiveDate::from_ymd_opt(base.year(), base.month(), 1).context("invalid month")?;
-	let next_month = if base.month() == 12 { NaiveDate::from_ymd_opt(base.year()+1, 1, 1).unwrap() } else { NaiveDate::from_ymd_opt(base.year(), base.month()+1, 1).unwrap() };
+	let next_month = if base.month() == 12 { 
+		NaiveDate::from_ymd_opt(base.year()+1, 1, 1).unwrap() 
+	} else { 
+		NaiveDate::from_ymd_opt(base.year(), base.month()+1, 1).unwrap() 
+	};
 	let last_day = (next_month - chrono::Days::new(1)).day();
-	println!("{}-{:02}", base.year(), base.month());
-	println!("Mo Tu We Th Fr Sa Su");
+	
+	// Month name mapping
+	let month_name = match base.month() {
+		1 => "January", 2 => "February", 3 => "March", 4 => "April",
+		5 => "May", 6 => "June", 7 => "July", 8 => "August",
+		9 => "September", 10 => "October", 11 => "November", 12 => "December",
+		_ => "Unknown"
+	};
+	
+	// Calculate padding for month/year line
+	let header_text = format!("{} {}", month_name, base.year());
+	let header_padding = 43 - header_text.len();
+	
+	// Print header with box drawing - each cell is 6 chars wide (7 days × 6 = 42 + 2 for borders = 44)
+	println!("\n┌──────────────────────────────────────────────┐");
+	println!("│ {}{:width$}│", 
+		format!("{} {}", month_name, base.year()).bold().cyan(),
+		"",
+		width = header_padding
+	);
+	println!("├──────────────────────────────────────────────┤");
+	println!("│  {}  {}  {}  {}  {}  {}  {}  │", 
+		"Mon".bold(), "Tue".bold(), "Wed".bold(), "Thu".bold(), 
+		"Fri".bold(), "Sat".bold().bright_blue(), "Sun".bold().bright_blue());
+	println!("├──────────────────────────────────────────────┤");
+	
 	let offset = first.weekday().num_days_from_monday();
+	let mut col = 0;
+	
+	// Print leading spaces for offset
+	print!("│");
+	for _ in 0..offset { 
+		print!("      "); 
+		col += 1;
+	}
+	
 	let mut d = 1u32;
-	for i in 0..offset { if i==0 { print!("") } print!("   "); }
 	while d <= last_day {
 		let cur = NaiveDate::from_ymd_opt(base.year(), base.month(), d).unwrap();
 		let path = file_for(cur)?;
 		let lines = read_file_lines(&path)?;
 		let bullets = parse_bullets(&lines);
-		let mark = if bullets.iter().any(|b| b.meeting_time.is_some()) { '*' } else if bullets.iter().any(|b| !b.completed) { '+' } else if !bullets.is_empty() { '.' } else { ' ' };
-		print!("{:>2}{} ", d, mark);
-		if cur.weekday().number_from_monday() == 7 { println!(); }
+		
+		// Determine marker (plain text, no color for width calculation)
+		let mark_char = if bullets.iter().any(|b| b.meeting_time.is_some()) { 
+			'*'
+		} else if bullets.iter().any(|b| !b.completed) { 
+			'•'
+		} else if !bullets.is_empty() { 
+			'✓'
+		} else { 
+			' '
+		};
+		
+		// Apply color to marker
+		let mark = match mark_char {
+			'*' => mark_char.to_string().red(),
+			'•' => mark_char.to_string().yellow(),
+			'✓' => mark_char.to_string().green(),
+			_ => mark_char.to_string().normal(),
+		};
+		
+		// Format day number with highlight for today
+		let day_str = if cur == today {
+			format!("{:>2}", d).bold().black().on_bright_blue()
+		} else if cur.weekday().number_from_monday() >= 6 {
+			format!("{:>2}", d).bright_blue()
+		} else {
+			format!("{:>2}", d).normal()
+		};
+		
+		// Each cell: 2-digit day + marker aligned in 6 chars
+		print!(" {:>2}{} ", day_str, mark);
+		col += 1;
+		
+		// New line after Sunday
+		if col == 7 {
+			println!("│");
+			if d < last_day {
+				print!("│");
+			}
+			col = 0;
+		}
+		
 		d += 1;
 	}
+	
+	// Fill remaining cells if we didn't end on Sunday
+	if col > 0 {
+		while col < 7 {
+			print!("      ");
+			col += 1;
+		}
+		println!("│");
+	}
+	
+	println!("└──────────────────────────────────────────────┘");
+	println!("\n{}", "Legend:".bold());
+	println!("  {} Meeting scheduled    {} Open tasks", "*".red(), "•".yellow());
+	println!("  {} All tasks done      {} Current day", "✓".green(), "▓▓".bold().black().on_bright_blue());
 	println!();
-	println!("legend: * meeting, + open bullets, . only done, ' ' empty");
+	
 	Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::env;
+    use serial_test::serial;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestEnv {
+        root: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+        _prev_xdg: Option<String>,
+    }
+    
+    impl TestEnv {
+        fn new() -> Self {
+            // Save current XDG_DATA_HOME
+            let prev_xdg = env::var("XDG_DATA_HOME").ok();
+            
+            // Create unique test directory using test counter
+            let mut test_root = env::temp_dir();
+            let test_num = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let uniq = format!("bj_test_{}_{}", 
+                std::process::id(),
+                test_num);
+            test_root.push(uniq);
+            fs::create_dir_all(&test_root).expect("create test root");
+            
+            // Create XDG data dir inside test root
+            let data_home = test_root.join("data");
+            let data_dir = data_home.join("bullet_journal");
+            fs::create_dir_all(&data_dir).expect("create data dir");
+            
+            // Set XDG_DATA_HOME to our test directory
+            env::set_var("XDG_DATA_HOME", data_home.to_str().unwrap());
+            
+            TestEnv {
+                root: test_root,
+                data_dir,
+                _prev_xdg: prev_xdg,
+            }
+        }
+    }
+    
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            // Restore previous XDG_DATA_HOME
+            match &self._prev_xdg {
+                Some(prev) => env::set_var("XDG_DATA_HOME", prev),
+                None => env::remove_var("XDG_DATA_HOME"),
+            }
+            // Clean up test directory
+            fs::remove_dir_all(&self.root).ok();
+        }
+    }
+
+    #[test]
+    fn test_parse_text_meta_only() {
+        // Test priority and tags
+        let s = "(!!!) Test bullet #work #urgent";
+        let (text, pr, tags) = parse_text_meta_only(s);
+        assert_eq!(text, "Test bullet", "Text not correctly extracted");
+        assert_eq!(pr, Some(3), "High priority not detected");
+        assert_eq!(tags, vec!["work".to_string(), "urgent".to_string()], "Tags not correctly parsed");
+
+        // Test medium priority
+        let s = "(!!) Medium priority #dev";
+        let (text, pr, tags) = parse_text_meta_only(s);
+        assert_eq!(text, "Medium priority", "Text with medium priority not extracted");
+        assert_eq!(pr, Some(2), "Medium priority not detected");
+        assert_eq!(tags, vec!["dev".to_string()], "Single tag not parsed");
+
+        // Test no metadata
+        let s = "Simple bullet";
+        let (text, pr, tags) = parse_text_meta_only(s);
+        assert_eq!(text, "Simple bullet", "Plain text not preserved");
+        assert_eq!(pr, None, "Should have no priority");
+        assert!(tags.is_empty(), "Should have no tags");
+    }
+
+    #[test]
+    fn test_parse_text_meeting_meta() {
+        // Test full meeting metadata
+        let s = "[mtg 15:30 45] Team sync #work";
+        let (text, pr, tags, mt, dur) = parse_text_meeting_meta(s);
+        assert_eq!(text, "Team sync", "Meeting text not extracted");
+        assert_eq!(pr, None, "Should have no priority");
+        assert_eq!(tags, vec!["work".to_string()], "Meeting tag not parsed");
+        assert_eq!(mt.unwrap().format("%H:%M").to_string(), "15:30", "Meeting time not parsed");
+        assert_eq!(dur, Some(45), "Meeting duration not parsed");
+
+        // Test meeting without duration
+        let s = "[mtg 09:00] Daily standup";
+        let (text, _pr, _tags, mt, dur) = parse_text_meeting_meta(s);
+        assert_eq!(text, "Daily standup", "Simple meeting text not extracted");
+        assert_eq!(mt.unwrap().format("%H:%M").to_string(), "09:00", "Simple meeting time not parsed");
+        assert_eq!(dur, None, "Should have no duration");
+
+        // Test non-meeting text
+        let s = "Regular bullet";
+        let (text, _pr, _tags, mt, dur) = parse_text_meeting_meta(s);
+        assert_eq!(text, "Regular bullet", "Non-meeting text should be preserved");
+        assert!(mt.is_none(), "Non-meeting should have no time");
+        assert!(dur.is_none(), "Non-meeting should have no duration");
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_meeting_metadata() -> Result<()> {
+        let _env = TestEnv::new();
+        let date = NaiveDate::from_ymd_opt(2025, 11, 6).unwrap();
+        
+        // Add a meeting
+        add_meeting(date, 
+            NaiveTime::from_hms_opt(14, 30, 0).unwrap(),
+            45,
+            "Team Sync",
+            &vec!["work".to_string()],
+            &vec!["Prep required".to_string()]
+        )?;
+        
+        // Verify the meeting was added correctly
+        let path = file_for(date)?;
+        let lines = read_file_lines(&path)?;
+        let bullets = parse_bullets(&lines);
+        assert_eq!(bullets.len(), 1, "Expected exactly one meeting bullet");
+        
+        let mtg = &bullets[0];
+        assert_eq!(mtg.text, "Team Sync", "Meeting title mismatch");
+        assert_eq!(mtg.meeting_time.unwrap().format("%H:%M").to_string(), "14:30", "Meeting time mismatch");
+        assert_eq!(mtg.meeting_duration_min, Some(45), "Meeting duration mismatch");
+        assert_eq!(mtg.tags, vec!["work"], "Meeting tag mismatch");
+        assert_eq!(mtg.notes, vec!["Prep required"], "Meeting note mismatch");
+        
+        Ok(())
+    }
+
+    
+
+    #[test]
+    #[serial]  // Prevent parallel test runs 
+    fn test_add_and_parse_bullet() -> Result<()> {
+        let _env = TestEnv::new();
+        let date = NaiveDate::from_ymd_opt(2025, 11, 6).unwrap();
+        
+        // Add a bullet with priority, tags, and notes
+        add_bullet(date, "Write tests", Some(2), &vec!["dev".to_string()], &vec!["first note".to_string()])?;
+        
+        let path = file_for(date)?;
+        let lines = read_file_lines(&path)?;
+        let bullets = parse_bullets(&lines);
+        
+        assert_eq!(bullets.len(), 1, "Expected exactly one bullet");
+        let b = &bullets[0];
+        assert_eq!(b.text, "Write tests", "Bullet text mismatch");
+        assert_eq!(b.priority, Some(2), "Priority mismatch");
+        assert_eq!(b.tags, vec!["dev"], "Tags mismatch");
+        assert_eq!(b.notes.len(), 1, "Expected one note");
+        assert!(b.notes[0].contains("first note"), "Note content mismatch");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_mark_done() -> Result<()> {
+        let _env = TestEnv::new();
+        let date = NaiveDate::from_ymd_opt(2025, 11, 6).unwrap();
+        
+        // Add two bullets
+        add_bullet(date, "Task A", None, &vec![], &vec![])?;
+        add_bullet(date, "Task B", None, &vec![], &vec![])?;
+        
+        // Parse to verify initial state
+        let initial = parse_bullets(&read_file_lines(&file_for(date)?)?);
+        assert_eq!(initial.len(), 2, "Expected two bullets initially");
+        assert!(!initial[0].completed && !initial[1].completed, "Bullets should start incomplete");
+        
+        // Mark first one done
+        mark_done(date, 1)?;
+        
+        let bullets = parse_bullets(&read_file_lines(&file_for(date)?)?);
+        assert_eq!(bullets.len(), 2, "Should still have two bullets after marking one done");
+        assert!(bullets[0].completed, "First bullet should be marked done");
+        assert!(!bullets[1].completed, "Second bullet should still be incomplete");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_migrate_one_to_today() -> Result<()> {
+        let _env = TestEnv::new();
+        let from = NaiveDate::from_ymd_opt(2025, 11, 4).unwrap();
+        let today = Local::now().date_naive();
+        
+        // Create two bullets on source date with unique identifiable text
+        add_bullet(from, "Source Bullet A", None, &vec![], &vec![])?;
+        add_bullet(from, "Source Bullet B", Some(2), &vec!["important".to_string()], &vec![])?;
+        
+        // Read source file to find bullet indices
+        let from_path = file_for(from)?;
+        let initial_lines = read_file_lines(&from_path)?;
+        let initial = parse_bullets(&initial_lines);
+        assert_eq!(initial.len(), 2, "Should have two bullets initially");
+        
+        // Find B's index and migrate it
+        let b_index = initial.iter()
+            .find(|b| b.text == "Source Bullet B")
+            .map(|b| b.visible_index)
+            .expect("Should find bullet B");
+        migrate_one_to_today(from, b_index)?;
+        
+        // Verify source file - should only have bullet A
+        let source_after = parse_bullets(&read_file_lines(&from_path)?);
+        assert_eq!(source_after.len(), 1, "Source should have one bullet remaining");
+        assert_eq!(source_after[0].text, "Source Bullet A", "Wrong bullet removed from source");
+        
+        // Verify target file - should have bullet B with metadata
+        let today_path = file_for(today)?;
+        let target = parse_bullets(&read_file_lines(&today_path)?);
+        assert_eq!(target.len(), 1, "Target should have one bullet");
+        
+        let migrated = &target[0];
+        assert_eq!(migrated.text, "Source Bullet B", "Wrong bullet migrated");
+        assert_eq!(migrated.priority, Some(2), "Priority not preserved");
+        assert_eq!(migrated.tags, vec!["important"], "Tags not preserved");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_migrate_open_to_today() -> Result<()> {
+        let _env = TestEnv::new();
+        let from = NaiveDate::from_ymd_opt(2025, 11, 3).unwrap();
+        let today = Local::now().date_naive();
+        
+        // Add three bullets with unique identifiable text
+        add_bullet(from, "First Task (Done)", None, &vec![], &vec![])?;
+        add_bullet(from, "Second Task (Open)", Some(1), &vec!["tag1".to_string()], &vec![])?;
+        add_bullet(from, "Third Task (Open)", Some(3), &vec!["tag2".to_string()], &vec![])?;
+        
+        // Mark first task done
+        let from_path = file_for(from)?;
+        let initial = parse_bullets(&read_file_lines(&from_path)?);
+        let first_id = initial.iter()
+            .find(|b| b.text == "First Task (Done)")
+            .map(|b| b.visible_index)
+            .expect("Should find first task");
+        mark_done(from, first_id)?;
+        
+        // Migrate open tasks
+        migrate_open_to_today(from)?;
+        
+        // Verify source - should only have done task
+        let source_after = parse_bullets(&read_file_lines(&from_path)?);
+        assert_eq!(source_after.len(), 1, "Source should have one bullet");
+        assert!(source_after[0].completed, "Source bullet should be done");
+        assert_eq!(source_after[0].text, "First Task (Done)", "Wrong task in source");
+        
+        // Verify target - should have both open tasks
+        let today_path = file_for(today)?;
+        let target = parse_bullets(&read_file_lines(&today_path)?);
+        assert_eq!(target.len(), 2, "Target should have two bullets");
+        
+        let second = target.iter()
+            .find(|b| b.text == "Second Task (Open)")
+            .expect("Second task should be migrated");
+        assert_eq!(second.priority, Some(1), "Priority not preserved");
+        assert_eq!(second.tags, vec!["tag1"], "Tags not preserved");
+        
+        let third = target.iter()
+            .find(|b| b.text == "Third Task (Open)")
+            .expect("Third task should be migrated");
+        assert_eq!(third.priority, Some(3), "Priority not preserved");
+        assert_eq!(third.tags, vec!["tag2"], "Tags not preserved");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_delete_bullet() -> Result<()> {
+        let _env = TestEnv::new();
+        let date = NaiveDate::from_ymd_opt(2025, 11, 6).unwrap();
+        
+        // Add three bullets
+        add_bullet(date, "Task A", None, &vec![], &vec![])?;
+        add_bullet(date, "Task B", Some(2), &vec!["important".to_string()], &vec!["Note 1".to_string(), "Note 2".to_string()])?;
+        add_bullet(date, "Task C", None, &vec![], &vec![])?;
+        
+        // Verify initial state
+        let path = file_for(date)?;
+        let initial = parse_bullets(&read_file_lines(&path)?);
+        assert_eq!(initial.len(), 3, "Expected three bullets initially");
+        
+        // Find Task B's ID and delete it
+        let b_id = initial.iter()
+            .find(|b| b.text == "Task B")
+            .map(|b| b.visible_index)
+            .expect("Should find Task B");
+        delete_bullet(date, b_id)?;
+        
+        // Verify deletion
+        let after = parse_bullets(&read_file_lines(&path)?);
+        assert_eq!(after.len(), 2, "Should have two bullets after deletion");
+        
+        // Verify Task B is gone and others remain
+        assert!(after.iter().any(|b| b.text == "Task A"), "Task A should remain");
+        assert!(after.iter().any(|b| b.text == "Task C"), "Task C should remain");
+        assert!(!after.iter().any(|b| b.text == "Task B"), "Task B should be deleted");
+        
+        // Verify visible indices are renumbered correctly
+        assert_eq!(after[0].visible_index, 1, "First bullet should be index 1");
+        assert_eq!(after[1].visible_index, 2, "Second bullet should be index 2");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_delete_meeting() -> Result<()> {
+        let _env = TestEnv::new();
+        let date = NaiveDate::from_ymd_opt(2025, 11, 6).unwrap();
+        
+        // Add a regular bullet and a meeting
+        add_bullet(date, "Regular Task", None, &vec![], &vec![])?;
+        add_meeting(date, 
+            NaiveTime::from_hms_opt(14, 30, 0).unwrap(),
+            45,
+            "Team Sync",
+            &vec!["work".to_string()],
+            &vec!["Prep agenda".to_string()]
+        )?;
+        
+        // Verify initial state
+        let path = file_for(date)?;
+        let initial = parse_bullets(&read_file_lines(&path)?);
+        assert_eq!(initial.len(), 2, "Expected two bullets initially");
+        
+        // Find and delete the meeting
+        let mtg_id = initial.iter()
+            .find(|b| b.text == "Team Sync")
+            .map(|b| b.visible_index)
+            .expect("Should find meeting");
+        delete_bullet(date, mtg_id)?;
+        
+        // Verify deletion
+        let after = parse_bullets(&read_file_lines(&path)?);
+        assert_eq!(after.len(), 1, "Should have one bullet after deletion");
+        assert_eq!(after[0].text, "Regular Task", "Regular task should remain");
+        assert!(!after.iter().any(|b| b.text == "Team Sync"), "Meeting should be deleted");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_migrate_to_specific_date() -> Result<()> {
+        let _env = TestEnv::new();
+        let from = NaiveDate::from_ymd_opt(2025, 11, 4).unwrap();
+        let to = NaiveDate::from_ymd_opt(2025, 11, 10).unwrap();
+        
+        // Create a bullet on source date
+        add_bullet(from, "Task for next week", Some(2), &vec!["work".to_string()], &vec![])?;
+        
+        // Get the bullet ID
+        let from_path = file_for(from)?;
+        let initial = parse_bullets(&read_file_lines(&from_path)?);
+        assert_eq!(initial.len(), 1, "Should have one bullet");
+        let bullet_id = initial[0].visible_index;
+        
+        // Migrate to specific date
+        migrate_one(from, to, bullet_id)?;
+        
+        // Verify source is empty
+        let source_after = parse_bullets(&read_file_lines(&from_path)?);
+        assert_eq!(source_after.len(), 0, "Source should be empty after migration");
+        
+        // Verify target has the bullet
+        let to_path = file_for(to)?;
+        let target = parse_bullets(&read_file_lines(&to_path)?);
+        assert_eq!(target.len(), 1, "Target should have one bullet");
+        assert_eq!(target[0].text, "Task for next week", "Bullet text should match");
+        assert_eq!(target[0].priority, Some(2), "Priority should be preserved");
+        assert_eq!(target[0].tags, vec!["work"], "Tags should be preserved");
+        
+        Ok(())
+    }
+
+    #[test]
+    #[serial]  // Prevent parallel test runs
+    fn test_migrate_open_to_specific_date() -> Result<()> {
+        let _env = TestEnv::new();
+        let from = NaiveDate::from_ymd_opt(2025, 11, 3).unwrap();
+        let to = NaiveDate::from_ymd_opt(2025, 11, 15).unwrap();
+        
+        // Add bullets with different states
+        add_bullet(from, "Done Task", None, &vec![], &vec![])?;
+        add_bullet(from, "Open Task 1", Some(1), &vec!["tag1".to_string()], &vec![])?;
+        add_bullet(from, "Open Task 2", Some(2), &vec!["tag2".to_string()], &vec![])?;
+        
+        // Mark first task done
+        let from_path = file_for(from)?;
+        let initial = parse_bullets(&read_file_lines(&from_path)?);
+        let done_id = initial.iter()
+            .find(|b| b.text == "Done Task")
+            .map(|b| b.visible_index)
+            .expect("Should find done task");
+        mark_done(from, done_id)?;
+        
+        // Migrate all open tasks to specific date
+        migrate_open(from, to)?;
+        
+        // Verify source only has completed task
+        let source_after = parse_bullets(&read_file_lines(&from_path)?);
+        assert_eq!(source_after.len(), 1, "Source should have one bullet");
+        assert!(source_after[0].completed, "Remaining bullet should be completed");
+        
+        // Verify target has both open tasks
+        let to_path = file_for(to)?;
+        let target = parse_bullets(&read_file_lines(&to_path)?);
+        assert_eq!(target.len(), 2, "Target should have two bullets");
+        assert!(target.iter().any(|b| b.text == "Open Task 1"), "Open Task 1 should be migrated");
+        assert!(target.iter().any(|b| b.text == "Open Task 2"), "Open Task 2 should be migrated");
+        
+        Ok(())
+    }
+
+
+}
+

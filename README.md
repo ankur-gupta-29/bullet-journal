@@ -51,7 +51,11 @@ bj list -d 2025-11-05                  # list a date
 bj list -t work -p 3                   # filter by tag and priority
 bj done 2                              # mark item 2 done (today)
 bj done -d 2025-11-05 3                # mark item 3 done for date
-bj migrate --from 2025-11-04           # move open items to today
+bj delete 3                            # delete item 3 (today)
+bj delete -d 2025-11-05 2              # delete item 2 for date
+bj migrate --from 2025-11-04           # move open items from date to today
+bj migrate --from 2025-11-04 --to 2025-11-10          # move open items to specific date
+bj migrate --from 2025-11-04 --to 2025-11-10 --id 2   # move specific item to date
 bj week                                # weekly view for current week
 bj week -d 2025-11-05 -t work          # weekly view filtered
 bj cal                                 # month calendar with markers
