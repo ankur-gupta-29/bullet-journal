@@ -15,3 +15,5 @@ Cargo.lock
 # Logs
 *.log
 
+# Local data
+tmp_data/
