@@ -1,167 +1,156 @@
-# bullet-journal (bj)
+# 📓 Bullet Journal CLI (bj)
 
-A simple terminal bullet journaling CLI. Stores daily Markdown files in `~/.local/share/bullet_journal/YYYY-MM-DD.md`.
+> A beautiful, fast, and terminal-based bullet journal for hackers and developers.
 
-## Install
+`bj` is a command-line tool designed to help you organize your day, manage tasks, and track meetings without ever leaving your terminal. It stores everything in simple Markdown files, making your data portable and easy to edit.
 
-```bash
-cargo install --path "$HOME/bullet-journal"
-```
+## ✨ Features
 
-If you want the short command `bj`:
+- **📝 Daily Journaling**: Add, list, and manage tasks for any date.
+- **🎨 Beautiful UI**: Modern terminal interface with progress bars, icons, and colors.
+- **📅 Calendar Views**:
+  - **Daily View**: See your tasks with priorities, tags, and notes.
+  - **Weekly View**: Visualize your week with a timeline-style layout.
+  - **Monthly Calendar**: Overview of your month with activity markers.
+- **⚡ Priorities & Tags**: Organize tasks with High (▲), Medium (▵), and Low (▽) priorities, and group them with `#tags`.
+- **🤝 Meeting Management**: Schedule meetings, track durations, and get notifications.
+- **🔄 Migration**: Easily move unfinished tasks to the next day or a specific date.
+- **🔔 Notifications**: Optional systemd integration for meeting reminders and daily prompts.
+- **💾 Markdown Storage**: Your data belongs to you. Everything is stored as standard Markdown.
 
-```bash
-ln -sf "$HOME/.cargo/bin/bullet-journal" "$HOME/.cargo/bin/bj"
-```
+## 🚀 Installation
 
-Ensure `~/.cargo/bin` is on your PATH.
-
-## Uninstall
-
-Remove the installed binaries and optional symlink:
-
-```bash
-cargo uninstall bullet-journal
-rm -f "$HOME/.cargo/bin/bj"
-```
-
-Remove the daily reminder (if you enabled it) and its files:
+### From Source
 
 ```bash
-systemctl --user disable --now bj-remind.timer || true
-rm -f "$HOME/.config/systemd/user/bj-remind.timer" "$HOME/.config/systemd/user/bj-remind.service"
-systemctl --user daemon-reload
-rm -f "$HOME/.local/bin/bj-remind"
+# Clone the repository
+git clone https://github.com/ankur-gupta-29/bullet-journal.git
+cd bullet-journal
+
+# Install with cargo
+cargo install --path .
 ```
 
-Optionally delete your journal data (irreversible):
+### Quick Alias
+
+For convenience, alias `bullet-journal` to `bj`:
 
 ```bash
-rm -rf "$HOME/.local/share/bullet_journal"
+# Add to your .bashrc or .zshrc
+alias bj="bullet-journal"
 ```
 
-## Usage
+## 📖 Usage
+
+### 1. Managing Tasks
 
 ```bash
-bj add "Draft project plan"                               # add to today
-bj add -d 2025-11-05 "Backfill notes"                     # add to a date
-bj add -p high -t work -t urgent "Release train" -n "prep notes" -n "ping QA"
-bj list                                # list today
-bj list -d 2025-11-05                  # list a date
-bj list -t work -p 3                   # filter by tag and priority
-bj done 2                              # mark item 2 done (today)
-bj done -d 2025-11-05 3                # mark item 3 done for date
-bj delete 3                            # delete item 3 (today)
-bj delete -d 2025-11-05 2              # delete item 2 for date
-bj migrate --from 2025-11-04           # move open items from date to today
-bj migrate --from 2025-11-04 --to 2025-11-10          # move open items to specific date
-bj migrate --from 2025-11-04 --to 2025-11-10 --id 2   # move specific item to date
-bj week                                # weekly view for current week
-bj week -d 2025-11-05 -t work          # weekly view filtered
-bj cal                                 # month calendar with markers
+# Add a task for today
+bj add "Review Pull Requests"
 
-# Meetings
-bj meeting add -d 2025-11-05 -t 15:00 -u 30 -g work "Team sync"
-bj meeting list                        # list today's meetings sorted by time
-bj meeting notify -w 15                # notify meetings starting in next 15 minutes
+# Add a task with priority, tags, and notes
+bj add "Write Documentation" -p high -t work -t docs -n "Focus on API" -n "Include examples"
+
+# Add a task to a specific date
+bj add -d 2025-12-01 "Plan Q1 Roadmap"
+
+# Mark a task as done (by ID)
+bj done 1
+
+# Delete a task
+bj delete 2
 ```
 
-- **Storage format** (Markdown):
-- Open: `- [ ] (!!!) Release train #work #urgent`
-- Done: `- [x] (!!!) Release train #work #urgent`
-- Notes: indented lines like `  - note: prep notes`
-- **IDs**: positional per day file (1-based) and ignore non-bullet lines.
-
-### Meetings format
-- Stored inline as bullets with a prefix, e.g.: `- [ ] [mtg 15:00 30] Team sync #work`
-- Duration is optional; default 60 minutes.
-- Notes can be added with `-n` and appear on indented lines under the item.
-
-## Meeting notifier (optional)
-
-Enable periodic checks (every minute) for upcoming meetings with notifications 15 minutes before start:
+### 2. Meetings
 
 ```bash
-install -d -m 755 "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/bj-meeting-notify.service" << 'EOF'
-[Unit]
-Description=Bullet Journal meeting notifications
+# Add a meeting (default duration 60m)
+bj meeting add -t 10:00 "Daily Standup"
 
-[Service]
-Type=oneshot
-Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=%h/.cargo/bin/bj meeting notify -w 15
+# Add a meeting with duration and tags
+bj meeting add -t 14:00 -u 30 -g work "Design Review"
 
-[Install]
-WantedBy=default.target
-EOF
-
-cat > "$HOME/.config/systemd/user/bj-meeting-notify.timer" << 'EOF'
-[Unit]
-Description=Run meeting notifications every minute
-
-[Timer]
-OnCalendar=*-*-* *:*:00
-Unit=bj-meeting-notify.service
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl --user daemon-reload
-systemctl --user enable --now bj-meeting-notify.timer
+# List today's meetings
+bj meeting list
 ```
 
-## Daily reminder (optional)
-
-Create a daily desktop notification at 09:00 using systemd user timers:
+### 3. Views
 
 ```bash
-install -d -m 755 "$HOME/.local/bin"
-cat > "$HOME/.local/bin/bj-remind" << 'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-TITLE="Bullet Journal"
-MSG="Don’t forget to fill your journal today. Run: bj add \"...\""
-if command -v notify-send >/dev/null 2>&1; then
-  notify-send "$TITLE" "$MSG"
-else
-  echo "$TITLE: $MSG"
-fi
-EOF
-chmod +x "$HOME/.local/bin/bj-remind"
+# List today's tasks and meetings
+bj list
 
-install -d -m 755 "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/bj-remind.service" << 'EOF'
-[Unit]
-Description=Bullet Journal daily reminder notification
+# Show the weekly timeline
+bj week
 
-[Service]
-Type=oneshot
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=%h/.local/bin/bj-remind
-
-[Install]
-WantedBy=default.target
-EOF
-
-cat > "$HOME/.config/systemd/user/bj-remind.timer" << 'EOF'
-[Unit]
-Description=Run Bullet Journal reminder daily at 09:00
-
-[Timer]
-OnCalendar=*-*-* 09:00:00
-Persistent=true
-Unit=bj-remind.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl --user daemon-reload
-systemctl --user enable --now bj-remind.timer
+# Show the monthly calendar
+bj cal
 ```
 
-Change the reminder time by editing `OnCalendar` and restarting the timer.
+### 4. Task Migration
 
+```bash
+# Move all open tasks from yesterday to today
+bj migrate
+
+# Move tasks from a specific date
+bj migrate --from 2025-11-20
+
+# Move a specific task to another date
+bj migrate --from 2025-11-20 --to 2025-11-25 --id 3
+```
+
+## 🖼️ Visuals
+
+**Daily List View:**
+```text
+╭──────────────────────────────────────────────────╮
+│                  BULLET JOURNAL                  │
+├──────────────────────────────────────────────────┤
+│ 📅 Today                                          │
+│ ━━━━━━━━━━━━━━━━━━━━ 16%                         │
+│ ✓ 1/6 done  •  🗓 2 mtgs                          │
+╰──────────────────────────────────────────────────╯
+
+  1 ○ ▲          Review PRs   work
+  2 ●            Lunch with team   social
+  3 ○ ▵          Write documentation   work
+       ├── Focus on API docs
+       └── Include examples
+  4 ○ ▽          Buy groceries   personal
+  5 ○   🕒 10:00 Daily Standup   work
+```
+
+**Monthly Calendar:**
+```text
+╭──────────────────────────────────────────╮
+│              November 2025               │
+├──────────────────────────────────────────┤
+│  Mo    Tu    We    Th    Fr    Sa    Su  │
+│                                1     2   │
+│  3     4     5     6     7     8     9   │
+│ 10    11    12    13    14    15    16   │
+│ 17    18    19    20    21    22    23   │
+│ 24    25•   26    27    28    29    30   │
+╰──────────────────────────────────────────╯
+```
+
+## ⚙️ Configuration & Data
+
+- **Data Location**: `~/.local/share/bullet_journal/YYYY-MM-DD.md`
+- **Format**: Standard Markdown. You can edit files manually if you prefer!
+
+## 🤖 Automation (Optional)
+
+### Meeting Notifications
+Get notified 15 minutes before a meeting starts.
+
+```bash
+# Create systemd service and timer
+# (See 'Meeting notifier' section in previous docs for full script)
+bj meeting notify -w 15
+```
+
+## 📄 License
+
+MIT License.
