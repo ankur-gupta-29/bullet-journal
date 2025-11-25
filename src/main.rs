@@ -465,132 +465,119 @@ fn list_bullets(date: NaiveDate, filter_tags: &[String], filter_priority: Option
 		return Ok(());
 	}
 	
-	// Get today's date to show relative dates
+	// Get today's date
 	let today = Local::now().date_naive();
-	let date_display = if date == today {
-		format!("{} Today", "📅".normal())
-	} else if date == today.pred_opt().unwrap_or(date) {
-		format!("{} Yesterday", "📅".normal())
-	} else if date == today.succ_opt().unwrap_or(date) {
-		format!("{} Tomorrow", "📅".normal())
-	} else {
-		format!("{} {}", "📅".normal(), date.format("%A, %B %d, %Y"))
-	};
 	
 	// Count tasks
 	let total = bullets.len();
 	let completed = bullets.iter().filter(|b| b.completed).count();
 	let meetings = bullets.iter().filter(|b| b.meeting_time.is_some()).count();
 	
-	// Box width
-	let box_width = 61;
+	// Progress bar
+	let pct = if total > 0 { (completed as f64 / total as f64 * 100.0) as usize } else { 0 };
+	let bars = 20;
+	let filled = if total > 0 { (completed * bars) / total } else { 0 };
+	let empty = bars - filled;
+	let progress_bar = format!("{}{}", "━".repeat(filled).green(), "━".repeat(empty).bright_black());
 	
-	// Format date display without ANSI codes for width calculation
-	let date_text = if date == today {
-		"📅 Today".to_string()
+	// Box width
+	let box_width = 50;
+	
+	// Date string
+	let date_str = if date == today {
+		"Today".to_string()
 	} else if date == today.pred_opt().unwrap_or(date) {
-		"📅 Yesterday".to_string()
+		"Yesterday".to_string()
 	} else if date == today.succ_opt().unwrap_or(date) {
-		"📅 Tomorrow".to_string()
+		"Tomorrow".to_string()
 	} else {
-		format!("📅 {}", date.format("%A, %B %d, %Y"))
+		date.format("%A, %B %d").to_string()
 	};
 	
-	// Calculate padding for date line (accounting for emoji being 2 chars wide visually)
-	let date_visual_len = date_text.chars().count() + 1; // +1 for emoji extra width
-	let date_padding = if date_visual_len < box_width { box_width - date_visual_len } else { 0 };
-	
-	// Format stats line
-	let stats_text = format!("✓ {}/{} completed  🗓 {} meetings", completed, total, meetings);
-	let stats_visual_len = stats_text.chars().count() + 2; // +2 for two emojis
-	let stats_padding = if stats_visual_len < box_width { box_width - stats_visual_len } else { 0 };
-	
 	// Header
-	println!("\n┌─────────────────────────────────────────────────────────────┐");
-	println!("│ {}{:width$}│", date_text.bold(), "", width = date_padding);
-	println!("│ {}{:width$}│", 
-		format!("{} {}/{} completed  {} {} meetings", 
-			"✓".green(), 
-			completed.to_string().normal(),
-			total.to_string().normal(),
-			"🗓".normal(),
-			meetings.to_string().normal()
-		),
-		"",
-		width = stats_padding
+	println!("\n{}", format!("╭{:─<width$}╮", "", width = box_width).bright_black());
+	
+	// Title centered
+	let title = "BULLET JOURNAL";
+	let pad_left = (box_width - title.len()) / 2;
+	let pad_right = box_width - title.len() - pad_left;
+	println!("│{}{}{}│", 
+		" ".repeat(pad_left),
+		title.bold().magenta(),
+		" ".repeat(pad_right)
 	);
-	println!("└─────────────────────────────────────────────────────────────┘");
+	
+	println!("{}", format!("├{:─<width$}┤", "", width = box_width).bright_black());
+	
+	// Date line
+	let date_display = format!("📅 {}", date_str);
+	let date_len = date_display.chars().count(); 
+	let date_pad = if box_width > date_len { box_width - date_len - 2 } else { 0 };
+	println!("│ {}{} │", date_display.bold().cyan(), " ".repeat(date_pad));
+	
+	// Stats line
+	let stats_display = format!("{} {}%", progress_bar, pct);
+	let stats_len = bars + 1 + pct.to_string().len() + 1; // bars + space + pct + %
+	let stats_pad = if box_width > stats_len { box_width - stats_len - 2 } else { 0 };
+	println!("│ {}{} │", stats_display, " ".repeat(stats_pad));
+	
+	let summary = format!("✓ {}/{} done  •  🗓 {} mtgs", completed, total, meetings);
+	let sum_len = summary.chars().count();
+	let sum_pad = if box_width > sum_len { box_width - sum_len - 2 } else { 0 };
+	println!("│ {}{} │", summary.italic().dimmed(), " ".repeat(sum_pad));
+	
+	println!("{}", format!("╰{:─<width$}╯", "", width = box_width).bright_black());
 	println!();
 	
 	for b in bullets {
-		// Apply filters
-		if let Some(p) = filter_priority { 
-			if b.priority != Some(p) { continue; } 
-		}
+		if let Some(p) = filter_priority { if b.priority != Some(p) { continue; } }
 		if !filter_tags.is_empty() {
-			if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { 
-				continue; 
-			}
+			if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { continue; }
 		}
 		
-		// Status icon and checkbox
-		let (status_icon, checkbox) = if b.completed { 
-			("✓".green(), "[✓]".green().dimmed())
-		} else { 
-			("○".yellow(), "[ ]".yellow())
+		// Fancy Checkbox
+		let checkbox = if b.completed { "●".green() } else { "○".bright_black() };
+		
+		// Priority with different style
+		let priority_icon = match b.priority {
+			Some(3) => "▲".red(),
+			Some(2) => "▵".yellow(),
+			Some(1) => "▽".green(),
+			_ => " ".normal(),
 		};
 		
-		// Priority indicator
-		let priority_str = match b.priority {
-			Some(3) => " 🔴 HIGH ".red().bold(),
-			Some(2) => " 🟡 MED  ".yellow(),
-			Some(1) => " 🟢 LOW  ".bright_green(),
-			_ => "        ".normal(),
-		};
-		
-		// Meeting time
+		// Time with clock icon
 		let time_str = if let Some(t) = b.meeting_time {
-			format!(" 🕐 {} ", t.format("%H:%M")).cyan().bold()
+			format!("{} {}", "🕒".cyan(), t.format("%H:%M").to_string().cyan())
 		} else {
-			"         ".normal()
+			"        ".normal().to_string()
 		};
 		
-		// Tags
-		let tags_str = if b.tags.is_empty() { 
-			String::new() 
-		} else { 
-			format!(" {}", b.tags.iter()
-				.map(|t| format!("#{}", t))
-				.collect::<Vec<_>>()
-				.join(" "))
-		};
-		let tags_colored = tags_str.blue();
-		
-		// Index
-		let idx = format!("{:>2}.", b.visible_index).bright_black();
-		
-		// Main line with text (dim if completed)
-		let text_display = if b.completed {
-			b.text.dimmed()
-		} else {
-			b.text.normal()
+		// Tags as badges
+		let tags_str = if b.tags.is_empty() { String::new() } else { 
+			format!(" {}", b.tags.iter().map(|t| format!("{}", t)).collect::<Vec<_>>().join(" "))
 		};
 		
-		println!("{} {} {}{}{} {}", 
+		let idx = format!("{:>2}", b.visible_index).dimmed();
+		let text = if b.completed { b.text.dimmed().strikethrough() } else { b.text.bold() };
+		
+		// Main line
+		println!(" {} {} {} {} {}{}", 
 			idx, 
-			checkbox,
-			priority_str,
-			time_str,
-			text_display,
-			tags_colored
+			checkbox, 
+			priority_icon, 
+			time_str, 
+			text, 
+			if b.tags.is_empty() { "".normal() } else { format!("  {}", tags_str).blue().italic() }
 		);
 		
-		// Notes with better indentation
-		for n in &b.notes {
-			println!("      {} {}", "↳".bright_black(), n.dimmed());
+		// Notes with nice tree structure
+		let last_note_idx = b.notes.len().saturating_sub(1);
+		for (i, n) in b.notes.iter().enumerate() {
+			let connector = if i == last_note_idx { "└──" } else { "├──" };
+			println!("       {} {}", connector.bright_black(), n.dimmed());
 		}
 	}
-	
 	println!();
 	Ok(())
 }
@@ -705,40 +692,68 @@ fn parse_priority_opt(v: Option<&str>) -> Result<Option<u8>> {
 fn week_view(base: NaiveDate, filter_tags: &[String], filter_priority: Option<u8>) -> Result<()> {
 	let weekday = base.weekday().num_days_from_monday() as i64;
 	let start = base - chrono::Days::new(weekday as u64);
+	
+	// Header for the week
+	let end = start + chrono::Days::new(6);
+	println!("\n{}", format!("Week: {} - {}", start.format("%b %d"), end.format("%b %d")).bold().underline());
+	
 	for i in 0..7 {
 		let day = start + chrono::Days::new(i);
-		println!("\n# {}", day);
 		let path = file_for(day)?;
 		let lines = read_file_lines(&path)?;
 		let bullets = parse_bullets(&lines);
-		let mut count_open = 0usize;
-		let mut count_done = 0usize;
-		for b in &bullets {
-			if let Some(p) = filter_priority { if b.priority != Some(p) { continue; } }
-			if !filter_tags.is_empty() {
-				if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { continue; }
-			}
-			if b.completed { count_done += 1; } else { count_open += 1; }
+		
+		let is_today = day == Local::now().date_naive();
+		let day_header = format!("{}", day.format("%A, %b %d"));
+		
+		// Day header with separator
+		if is_today {
+			println!("\n{} {}", "●".cyan(), day_header.bold().black().on_cyan());
+		} else {
+			println!("\n{} {}", "○".bright_black(), day_header.bold().cyan());
 		}
-			println!("{}", format!("Open: {}, Done: {}", count_open, count_done).cyan());
+		
+		if bullets.is_empty() {
+			println!("   {}", "No tasks".dimmed().italic());
+			continue;
+		}
+		
 		for b in bullets {
 			if let Some(p) = filter_priority { if b.priority != Some(p) { continue; } }
 			if !filter_tags.is_empty() {
 				if !filter_tags.iter().all(|t| b.tags.iter().any(|bt| bt == t)) { continue; }
 			}
-			let status = if b.completed { "x" } else { " " };
-			let pr = match b.priority { Some(3) => "(!!!) ", Some(2) => "(!!) ", Some(1) => "(!) ", _ => "" };
-			let mut time_prefix = String::new();
-			if let Some(t) = b.meeting_time { time_prefix = format!("[mtg {}] ", t.format("%H:%M")); }
-			let tags = if b.tags.is_empty() { String::new() } else { format!(" {}", b.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")) };
-			let status_colored = if b.completed { "[x]".dimmed() } else { "[ ]".yellow() };
-			let pr_colored = match b.priority { Some(3) => "(!!!) ".red().bold(), Some(2) => "(!!) ".red(), Some(1) => "(!) ".yellow(), _ => "".normal() };
-			let time_col = if b.meeting_time.is_some() { time_prefix.green() } else { time_prefix.normal() };
-			let tags_col = if b.tags.is_empty() { tags.normal() } else { tags.blue() };
-			println!(" - {} {}{}{}{}", status_colored, pr_colored, time_col, b.text, tags_col);
-			for n in &b.notes { println!("   ↳ {}", n); }
+			
+			let checkbox = if b.completed { "●".green() } else { "○".bright_black() };
+			let priority_icon = match b.priority {
+				Some(3) => "▲".red(),
+				Some(2) => "▵".yellow(),
+				Some(1) => "▽".green(),
+				_ => " ".normal(),
+			};
+			
+			let time_str = if let Some(t) = b.meeting_time {
+				format!("{} ", t.format("%H:%M")).cyan().to_string()
+			} else {
+				"      ".normal().to_string()
+			};
+			
+			let tags_str = if b.tags.is_empty() { String::new() } else { 
+				format!(" {}", b.tags.iter().map(|t| format!("{}", t)).collect::<Vec<_>>().join(" "))
+			};
+			
+			let text = if b.completed { b.text.dimmed().strikethrough() } else { b.text.normal() };
+			
+			println!("   {} {} {} {}{}", checkbox, priority_icon, time_str, text, if b.tags.is_empty() { "".normal() } else { format!("  {}", tags_str).blue().italic() });
+			
+			let last_note_idx = b.notes.len().saturating_sub(1);
+			for (i, n) in b.notes.iter().enumerate() {
+				let connector = if i == last_note_idx { "└──" } else { "├──" };
+				println!("         {} {}", connector.bright_black(), n.dimmed());
+			}
 		}
 	}
+	println!();
 	Ok(())
 }
 
@@ -752,40 +767,28 @@ fn month_calendar(base: NaiveDate) -> Result<()> {
 	};
 	let last_day = (next_month - chrono::Days::new(1)).day();
 	
-	// Month name mapping
-	let month_name = match base.month() {
-		1 => "January", 2 => "February", 3 => "March", 4 => "April",
-		5 => "May", 6 => "June", 7 => "July", 8 => "August",
-		9 => "September", 10 => "October", 11 => "November", 12 => "December",
-		_ => "Unknown"
-	};
-	
-	// Calculate padding for month/year line
+	let month_name = base.format("%B").to_string();
 	let header_text = format!("{} {}", month_name, base.year());
-	let header_padding = 43 - header_text.len();
 	
-	// Print header with box drawing - each cell is 6 chars wide (7 days × 6 = 42 + 2 for borders = 44)
-	println!("\n┌──────────────────────────────────────────────┐");
-	println!("│ {}{:width$}│", 
-		format!("{} {}", month_name, base.year()).bold().cyan(),
-		"",
-		width = header_padding
-	);
-	println!("├──────────────────────────────────────────────┤");
-	println!("│  {}  {}  {}  {}  {}  {}  {}  │", 
-		"Mon".bold(), "Tue".bold(), "Wed".bold(), "Thu".bold(), 
-		"Fri".bold(), "Sat".bold().bright_blue(), "Sun".bold().bright_blue());
-	println!("├──────────────────────────────────────────────┤");
+	// Width calculation: 7 days * 6 chars + 2 border = 44
+	let width = 42;
+	let pad_left = (width - header_text.len()) / 2;
+	let pad_right = width - header_text.len() - pad_left;
+	
+	println!("\n{}", format!("╭{:─<width$}╮", "", width = width).bright_black());
+	println!("│{}{}{}│", " ".repeat(pad_left), header_text.bold().cyan(), " ".repeat(pad_right));
+	println!("{}", format!("├{:─<width$}┤", "", width = width).bright_black());
+	
+	// Correctly spaced header: 6 chars per day
+	println!("│{:^6}{:^6}{:^6}{:^6}{:^6}{:^6}{:^6}│", 
+		"Mo".bold(), "Tu".bold(), "We".bold(), "Th".bold(), 
+		"Fr".bold(), "Sa".bold().bright_blue(), "Su".bold().bright_blue());
 	
 	let offset = first.weekday().num_days_from_monday();
 	let mut col = 0;
 	
-	// Print leading spaces for offset
 	print!("│");
-	for _ in 0..offset { 
-		print!("      "); 
-		col += 1;
-	}
+	for _ in 0..offset { print!("      "); col += 1; }
 	
 	let mut d = 1u32;
 	while d <= last_day {
@@ -794,63 +797,45 @@ fn month_calendar(base: NaiveDate) -> Result<()> {
 		let lines = read_file_lines(&path)?;
 		let bullets = parse_bullets(&lines);
 		
-		// Determine marker (plain text, no color for width calculation)
-		let mark_char = if bullets.iter().any(|b| b.meeting_time.is_some()) { 
-			'*'
-		} else if bullets.iter().any(|b| !b.completed) { 
-			'•'
-		} else if !bullets.is_empty() { 
-			'✓'
-		} else { 
-			' '
-		};
+		let has_meeting = bullets.iter().any(|b| b.meeting_time.is_some());
+		let has_open = bullets.iter().any(|b| !b.completed);
+		let all_done = !bullets.is_empty() && bullets.iter().all(|b| b.completed);
 		
-		// Apply color to marker
-		let mark = match mark_char {
-			'*' => mark_char.to_string().red(),
-			'•' => mark_char.to_string().yellow(),
-			'✓' => mark_char.to_string().green(),
-			_ => mark_char.to_string().normal(),
-		};
+		let marker = if has_meeting { "•".red() }
+		else if has_open { "•".yellow() }
+		else if all_done { "•".green() }
+		else { " ".normal() };
 		
-		// Format day number with highlight for today
 		let day_str = if cur == today {
-			format!("{:>2}", d).bold().black().on_bright_blue()
+			format!("{:>2}", d).bold().white().on_blue()
 		} else if cur.weekday().number_from_monday() >= 6 {
 			format!("{:>2}", d).bright_blue()
 		} else {
 			format!("{:>2}", d).normal()
 		};
 		
-		// Each cell: 2-digit day + marker aligned in 6 chars
-		print!(" {:>2}{} ", day_str, mark);
+		print!(" {}{}  ", day_str, marker);
 		col += 1;
 		
-		// New line after Sunday
 		if col == 7 {
 			println!("│");
-			if d < last_day {
-				print!("│");
-			}
+			if d < last_day { print!("│"); }
 			col = 0;
 		}
-		
 		d += 1;
 	}
 	
-	// Fill remaining cells if we didn't end on Sunday
 	if col > 0 {
-		while col < 7 {
-			print!("      ");
-			col += 1;
-		}
+		while col < 7 { print!("      "); col += 1; }
 		println!("│");
 	}
 	
-	println!("└──────────────────────────────────────────────┘");
-	println!("\n{}", "Legend:".bold());
-	println!("  {} Meeting scheduled    {} Open tasks", "*".red(), "•".yellow());
-	println!("  {} All tasks done      {} Current day", "✓".green(), "▓▓".bold().black().on_bright_blue());
+	println!("{}", format!("╰{:─<width$}╯", "", width = width).bright_black());
+	
+	// Legend
+	println!("\n {}", "Legend:".bold().underline());
+	println!("  {} Meeting   {} Open task", "•".red(), "•".yellow());
+	println!("  {} All done  {} Today", "•".green(), "12".bold().white().on_blue());
 	println!();
 	
 	Ok(())
