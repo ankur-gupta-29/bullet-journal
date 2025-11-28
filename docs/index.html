@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bullet Journal - Stranger Things Edition</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Roboto:wght@300;400&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="crt-overlay"></div>
+    <div class="vignette"></div>
+    <div class="flashlight" id="flashlight"></div>
+    <div class="spores-container" id="spores"></div>
+    <div class="shadow-monster"></div>
+    <div class="clock-container" id="clock">
+        <div class="clock-face"></div>
+        <div class="pendulum"></div>
+    </div>
+
+    <div class="lights-strand">
+        <div class="light red"></div>
+        <div class="light green"></div>
+        <div class="light yellow"></div>
+        <div class="light blue"></div>
+        <div class="light red"></div>
+        <div class="light green"></div>
+        <div class="light yellow"></div>
+        <div class="light blue"></div>
+        <div class="light red"></div>
+        <div class="light green"></div>
+        <div class="light yellow"></div>
+        <div class="light blue"></div>
+        <div class="light red"></div>
+        <div class="light green"></div>
+        <div class="light yellow"></div>
+        <div class="light blue"></div>
+    </div>
+
+    <main>
+        <header>
+            <h1 class="stranger-title">
+                <span class="line-1">BULLET</span>
+                <span class="line-2">JOURNAL</span>
+            </h1>
+            <p class="season-tag">SEASON 5</p>
+            <button id="upside-down-btn" class="btn-toggle">ENTER THE UPSIDE DOWN</button>
+        </header>
+
+        <section class="intro">
+            <p>Organize your life... <span class="highlight">before it's too late.</span></p>
+        </section>
+
+        <section class="features">
+            <div class="feature-card" onclick="openTerminal('tasks')">
+                <h2>Track Tasks</h2>
+                <p>Keep track of your daily missions. Don't let the Demogorgon catch you unprepared.</p>
+                <span class="click-hint">Click to decrypt</span>
+            </div>
+            <div class="feature-card" onclick="openTerminal('events')">
+                <h2>Log Events</h2>
+                <p>Record strange occurrences and key events in your timeline.</p>
+                <span class="click-hint">Click to decrypt</span>
+            </div>
+            <div class="feature-card" onclick="openTerminal('notes')">
+                <h2>Notes</h2>
+                <p>Decipher the code. Keep your research safe.</p>
+                <span class="click-hint">Click to decrypt</span>
+            </div>
+        </section>
+
+        <section class="documentation-section" id="docs-section">
+            <h2 class="section-title">HAWKINS LAB ARCHIVES</h2>
+            <div class="terminal-window">
+                <div class="terminal-header">
+                    <span class="dot red"></span>
+                    <span class="dot yellow"></span>
+                    <span class="dot green"></span>
+                    <span class="title">TERMINAL_V5.0</span>
+                </div>
+                <div class="terminal-body" id="terminal-content">
+                    <div class="line">Loading system...</div>
+                    <div class="line">Connection established.</div>
+                    <div class="line">> <span class="cursor">_</span></div>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <a href="https://github.com/ankur-gupta-29/bullet-journal" class="btn-retro">View on GitHub</a>
+        </footer>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
