@@ -190,4 +190,98 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleBtn.style.borderColor = '';
         }
     });
+
+    // EASTER EGG 1: KONAMI CODE (The Real Upside Down)
+    const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+    let konamiIndex = 0;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === konamiCode[konamiIndex]) {
+            konamiIndex++;
+            if (konamiIndex === konamiCode.length) {
+                activateKonami();
+                konamiIndex = 0;
+            }
+        } else {
+            konamiIndex = 0;
+        }
+    });
+
+    function activateKonami() {
+        document.body.style.transition = 'transform 2s ease';
+        document.body.style.transform = document.body.style.transform === 'rotate(180deg)' ? 'rotate(0deg)' : 'rotate(180deg)';
+
+        // Play a special sound
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, audioContext.currentTime); // High pitch
+        osc.frequency.exponentialRampToValueAtTime(110, audioContext.currentTime + 1); // Drop
+        gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1);
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.start();
+        osc.stop(audioContext.currentTime + 1);
+    }
+
+    // EASTER EGG 2: TYPE "11" (Nose Bleed)
+    let elevenSequence = '';
+    document.addEventListener('keydown', (e) => {
+        if (e.key === '1') {
+            elevenSequence += '1';
+            if (elevenSequence === '11') {
+                triggerNoseBleed();
+                elevenSequence = '';
+            }
+        } else {
+            elevenSequence = '';
+        }
+    });
+
+    function triggerNoseBleed() {
+        const bleed = document.createElement('div');
+        bleed.classList.add('nose-bleed');
+        document.body.appendChild(bleed);
+
+        setTimeout(() => {
+            bleed.remove();
+        }, 5000);
+    }
+
+    // EASTER EGG 3: "RUN" LIGHTS MESSAGE
+    // Occasionally flash lights to spell RUN
+    function runMessage() {
+        const lights = document.querySelectorAll('.light');
+        if (lights.length === 0) return;
+
+        // Indices for R, U, N (simulated positions)
+        const rIndex = 4;
+        const uIndex = 8;
+        const nIndex = 12;
+
+        function flash(index, delay) {
+            setTimeout(() => {
+                lights[index].style.filter = 'brightness(3) drop-shadow(0 0 20px currentColor)';
+                setTimeout(() => {
+                    lights[index].style.filter = '';
+                }, 800);
+            }, delay);
+        }
+
+        // Sequence: R ... U ... N
+        flash(rIndex, 0);
+        flash(uIndex, 1000);
+        flash(nIndex, 2000);
+
+        // Repeat randomly
+        setTimeout(runMessage, Math.random() * 20000 + 10000);
+    }
+
+    // Start message loop after a delay
+    setTimeout(runMessage, 5000);
 });
