@@ -253,31 +253,93 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 5000);
     }
 
-    // EASTER EGG 3: "RUN" LIGHTS MESSAGE
+    // Light Wall Generation
+    const lightWall = document.getElementById('light-wall');
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const colors = ['#ff0000', '#00ff00', '#ffff00', '#0000ff']; // Red, Green, Yellow, Blue
+
+    const lightMap = {};
+
+    alphabet.split('').forEach((letter, index) => {
+        const container = document.createElement('div');
+        container.classList.add('light-bulb-container');
+
+        const bulb = document.createElement('div');
+        bulb.classList.add('light-bulb');
+        bulb.dataset.color = colors[index % colors.length];
+
+        const char = document.createElement('span');
+        char.classList.add('light-letter');
+        char.innerText = letter;
+
+        container.appendChild(bulb);
+        container.appendChild(char);
+        lightWall.appendChild(container);
+
+        lightMap[letter] = bulb;
+    });
+
+    // Communication Logic
+    const commInput = document.getElementById('comm-input');
+    const commBtn = document.getElementById('comm-btn');
+
+    function transmitMessage(message) {
+        if (!message) return;
+
+        let i = 0;
+        const speed = 1000; // 1 second per letter
+
+        function flashNext() {
+            if (i < message.length) {
+                const char = message[i].toUpperCase();
+                if (lightMap[char]) {
+                    const bulb = lightMap[char];
+                    const originalColor = bulb.dataset.color;
+
+                    bulb.style.backgroundColor = originalColor;
+                    bulb.classList.add('active');
+
+                    // Sound
+                    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const osc = audioContext.createOscillator();
+                    const gain = audioContext.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(300 + (char.charCodeAt(0) * 10), audioContext.currentTime);
+                    gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                    osc.connect(gain);
+                    gain.connect(audioContext.destination);
+                    osc.start();
+                    osc.stop(audioContext.currentTime + 0.5);
+
+                    setTimeout(() => {
+                        bulb.style.backgroundColor = '#444';
+                        bulb.classList.remove('active');
+                    }, 800);
+                }
+                i++;
+                setTimeout(flashNext, speed);
+            }
+        }
+        flashNext();
+    }
+
+    commBtn.addEventListener('click', () => {
+        transmitMessage(commInput.value);
+        commInput.value = '';
+    });
+
+    commInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            transmitMessage(commInput.value);
+            commInput.value = '';
+        }
+    });
+
+    // EASTER EGG 3: "RUN" LIGHTS MESSAGE (Updated for new wall)
     // Occasionally flash lights to spell RUN
     function runMessage() {
-        const lights = document.querySelectorAll('.light');
-        if (lights.length === 0) return;
-
-        // Indices for R, U, N (simulated positions)
-        const rIndex = 4;
-        const uIndex = 8;
-        const nIndex = 12;
-
-        function flash(index, delay) {
-            setTimeout(() => {
-                lights[index].style.filter = 'brightness(3) drop-shadow(0 0 20px currentColor)';
-                setTimeout(() => {
-                    lights[index].style.filter = '';
-                }, 800);
-            }, delay);
-        }
-
-        // Sequence: R ... U ... N
-        flash(rIndex, 0);
-        flash(uIndex, 1000);
-        flash(nIndex, 2000);
-
+        transmitMessage('RUN');
         // Repeat randomly
         setTimeout(runMessage, Math.random() * 20000 + 10000);
     }
