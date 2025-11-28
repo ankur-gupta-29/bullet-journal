@@ -583,7 +583,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 3000);
 
         // 4. Delete Elements one by one
-        const elements = Array.from(document.body.children).filter(el => !el.classList.contains('screen-crack') && !el.classList.contains('vecna-curse'));
+        // IMPORTANT: We must NOT delete the new atmospheric elements we just added!
+        const protectedClasses = ['screen-crack', 'vecna-curse', 'vecna-veins', 'vecna-fog', 'vecna-hive-mind', 'hive-particle'];
+
+        const elements = Array.from(document.body.children).filter(el => {
+            // Check if element has any of the protected classes
+            for (const cls of protectedClasses) {
+                if (el.classList.contains(cls)) return false;
+            }
+            return true;
+        });
 
         elements.forEach((el, index) => {
             setTimeout(() => {
@@ -595,12 +604,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 5. Final Message
         setTimeout(() => {
-            document.body.innerHTML = ''; // Clear everything
-            document.body.style.backgroundColor = 'black';
-            document.body.style.display = 'flex';
-            document.body.style.justifyContent = 'center';
-            document.body.style.alignItems = 'center';
-            document.body.style.height = '100vh';
+            // Instead of clearing innerHTML (which kills our effects), let's just hide the deleted elements permanently
+            // and append the message on top.
+
+            // Create a container for the message that sits on top of everything
+            const msgContainer = document.createElement('div');
+            msgContainer.style.position = 'fixed';
+            msgContainer.style.top = '0';
+            msgContainer.style.left = '0';
+            msgContainer.style.width = '100%';
+            msgContainer.style.height = '100%';
+            msgContainer.style.display = 'flex';
+            msgContainer.style.flexDirection = 'column';
+            msgContainer.style.justifyContent = 'center';
+            msgContainer.style.alignItems = 'center';
+            msgContainer.style.zIndex = '10000'; // Above everything
+            msgContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Add a semi-transparent black background to ensure readability
+
+            document.body.appendChild(msgContainer);
 
             const msg = document.createElement('h1');
             msg.innerText = "YOUR SUFFERING IS ALMOST AT AN END.";
@@ -611,7 +632,7 @@ document.addEventListener('DOMContentLoaded', () => {
             msg.style.opacity = '0';
             msg.style.transition = 'opacity 2s';
 
-            document.body.appendChild(msg);
+            msgContainer.appendChild(msg); // Append to container, not body
 
             // Force reflow
             setTimeout(() => { msg.style.opacity = '1'; }, 100);
@@ -630,8 +651,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 restoreBtn.onclick = () => location.reload();
 
-                msg.appendChild(document.createElement('br'));
-                msg.appendChild(restoreBtn);
+                msgContainer.appendChild(document.createElement('br'));
+                msgContainer.appendChild(restoreBtn);
             }, 3000);
 
         }, elements.length * 200 + 2000);
