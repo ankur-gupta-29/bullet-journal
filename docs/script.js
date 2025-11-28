@@ -502,4 +502,138 @@ document.addEventListener('DOMContentLoaded', () => {
             d20.remove();
         }, 3000);
     }
+    // EASTER EGG 8: VECNA'S CURSE (Type "vecna")
+    // WARNING: THIS WILL "DESTROY" THE WEBSITE
+    const vecnaCode = 'vecna';
+    let vecnaIndex = 0;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === vecnaCode[vecnaIndex]) {
+            vecnaIndex++;
+            if (vecnaIndex === vecnaCode.length) {
+                triggerVecnaCurse();
+                vecnaIndex = 0;
+            }
+        } else {
+            vecnaIndex = 0;
+            if (e.key.toLowerCase() === vecnaCode[0]) vecnaIndex = 1;
+        }
+    });
+
+    function triggerVecnaCurse() {
+        // 1. Play Clock Chime Sound (Ominous)
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create a deep, scary drone
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(50, audioContext.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(10, audioContext.currentTime + 4);
+        gain.gain.setValueAtTime(0.5, audioContext.currentTime);
+        gain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 4);
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.start();
+        osc.stop(audioContext.currentTime + 4);
+
+        // 2. Visual Chaos
+        document.body.classList.add('vecna-curse');
+
+        // Add Veins and Fog
+        const veins = document.createElement('div');
+        veins.classList.add('vecna-veins');
+        document.body.appendChild(veins);
+
+        const fog = document.createElement('div');
+        fog.classList.add('vecna-fog');
+        document.body.appendChild(fog);
+
+        // Add Mind Hive (Swirling Particles)
+        const hive = document.createElement('div');
+        hive.classList.add('vecna-hive-mind');
+        document.body.appendChild(hive);
+
+        for (let i = 0; i < 100; i++) {
+            const particle = document.createElement('div');
+            particle.classList.add('hive-particle');
+            particle.style.setProperty('--start-x', (Math.random() * 100 - 50) + 'vw');
+            particle.style.setProperty('--start-y', (Math.random() * 100 - 50) + 'vh');
+            particle.style.setProperty('--end-x', (Math.random() * 100 - 50) + 'vw');
+            particle.style.setProperty('--end-y', (Math.random() * 100 - 50) + 'vh');
+            particle.style.animationDelay = Math.random() * 5 + 's';
+            hive.appendChild(particle);
+        }
+
+        // Fade them in
+        setTimeout(() => {
+            veins.style.opacity = '1';
+            fog.style.opacity = '0.8';
+        }, 100);
+
+        // 3. "Crack" the screen (CSS overlay)
+        const crack = document.createElement('div');
+        crack.classList.add('screen-crack');
+        document.body.appendChild(crack);
+
+        // Crack appears suddenly
+        setTimeout(() => {
+            crack.style.opacity = '1';
+        }, 3000);
+
+        // 4. Delete Elements one by one
+        const elements = Array.from(document.body.children).filter(el => !el.classList.contains('screen-crack') && !el.classList.contains('vecna-curse'));
+
+        elements.forEach((el, index) => {
+            setTimeout(() => {
+                el.style.transition = 'transform 0.5s, opacity 0.5s';
+                el.style.transform = `rotate(${Math.random() * 90 - 45}deg) scale(0)`;
+                el.style.opacity = '0';
+            }, index * 200 + 1000); // Start deleting after 1s
+        });
+
+        // 5. Final Message
+        setTimeout(() => {
+            document.body.innerHTML = ''; // Clear everything
+            document.body.style.backgroundColor = 'black';
+            document.body.style.display = 'flex';
+            document.body.style.justifyContent = 'center';
+            document.body.style.alignItems = 'center';
+            document.body.style.height = '100vh';
+
+            const msg = document.createElement('h1');
+            msg.innerText = "YOUR SUFFERING IS ALMOST AT AN END.";
+            msg.style.color = '#ce1010';
+            msg.style.fontFamily = "'Playfair Display', serif";
+            msg.style.fontSize = '3rem';
+            msg.style.textAlign = 'center';
+            msg.style.opacity = '0';
+            msg.style.transition = 'opacity 2s';
+
+            document.body.appendChild(msg);
+
+            // Force reflow
+            setTimeout(() => { msg.style.opacity = '1'; }, 100);
+
+            // Restore button (to fix the site)
+            setTimeout(() => {
+                const restoreBtn = document.createElement('button');
+                restoreBtn.innerText = "FIGHT BACK (Reload)";
+                restoreBtn.style.marginTop = '2rem';
+                restoreBtn.style.padding = '10px 20px';
+                restoreBtn.style.background = 'transparent';
+                restoreBtn.style.border = '1px solid #ce1010';
+                restoreBtn.style.color = '#ce1010';
+                restoreBtn.style.cursor = 'pointer';
+                restoreBtn.style.fontFamily = "'Courier New', monospace";
+
+                restoreBtn.onclick = () => location.reload();
+
+                msg.appendChild(document.createElement('br'));
+                msg.appendChild(restoreBtn);
+            }, 3000);
+
+        }, elements.length * 200 + 2000);
+    }
 });
