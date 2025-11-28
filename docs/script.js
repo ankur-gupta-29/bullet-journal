@@ -284,4 +284,160 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Start message loop after a delay
     setTimeout(runMessage, 5000);
+
+    // EASTER EGG 4: TYPE "WAFFLE" (Eleven's Favorite)
+    const waffleCode = 'waffle';
+    let waffleIndex = 0;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === waffleCode[waffleIndex]) {
+            waffleIndex++;
+            if (waffleIndex === waffleCode.length) {
+                triggerWaffleRain();
+                waffleIndex = 0;
+            }
+        } else {
+            waffleIndex = 0;
+            // Retry if the current key matches the first letter
+            if (e.key.toLowerCase() === waffleCode[0]) {
+                waffleIndex = 1;
+            }
+        }
+    });
+
+    function triggerWaffleRain() {
+        for (let i = 0; i < 20; i++) {
+            setTimeout(() => {
+                const waffle = document.createElement('div');
+                waffle.classList.add('waffle');
+                waffle.style.left = Math.random() * 100 + 'vw';
+                waffle.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                document.body.appendChild(waffle);
+
+                setTimeout(() => {
+                    waffle.remove();
+                }, 4000);
+            }, i * 200);
+        }
+    }
+
+    // EASTER EGG 5: CLICK TITLE (Demogorgon Roar)
+    const title = document.querySelector('.stranger-title');
+    title.style.cursor = 'pointer';
+    title.addEventListener('click', () => {
+        document.body.classList.add('shake');
+
+        // Play Roar Sound
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // Noise buffer for roar
+        const bufferSize = audioContext.sampleRate * 1.5; // 1.5 seconds
+        const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioContext.createBufferSource();
+        noise.buffer = buffer;
+
+        const noiseFilter = audioContext.createBiquadFilter();
+        noiseFilter.type = 'lowpass';
+        noiseFilter.frequency.value = 1000;
+
+        const noiseGain = audioContext.createGain();
+        noiseGain.gain.setValueAtTime(0.5, audioContext.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.5);
+
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(audioContext.destination);
+        noise.start();
+
+        setTimeout(() => {
+            document.body.classList.remove('shake');
+        }, 500);
+    });
+
+    // EASTER EGG 6: TYPE "MAX" (Levitation)
+    const maxCode = 'max';
+    let maxIndex = 0;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === maxCode[maxIndex]) {
+            maxIndex++;
+            if (maxIndex === maxCode.length) {
+                triggerMaxLevitation();
+                maxIndex = 0;
+            }
+        } else {
+            maxIndex = 0;
+            if (e.key.toLowerCase() === maxCode[0]) maxIndex = 1;
+        }
+    });
+
+    function triggerMaxLevitation() {
+        const cards = document.querySelectorAll('.feature-card');
+        cards.forEach((card, index) => {
+            setTimeout(() => {
+                card.classList.add('levitate');
+            }, index * 200);
+        });
+
+        // Stop after 8 seconds (song duration-ish)
+        setTimeout(() => {
+            cards.forEach(card => {
+                card.classList.remove('levitate');
+            });
+        }, 8000);
+    }
+
+    // EASTER EGG 7: TYPE "DND" (Hellfire Club)
+    const dndCode = 'dnd';
+    let dndIndex = 0;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === dndCode[dndIndex]) {
+            dndIndex++;
+            if (dndIndex === dndCode.length) {
+                triggerCriticalHit();
+                dndIndex = 0;
+            }
+        } else {
+            dndIndex = 0;
+            if (e.key.toLowerCase() === dndCode[0]) dndIndex = 1;
+        }
+    });
+
+    function triggerCriticalHit() {
+        const d20 = document.createElement('div');
+        d20.classList.add('d20-overlay');
+        document.body.appendChild(d20);
+
+        // Play dice roll sound (simulated)
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // Quick click/thud sound
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(100, audioContext.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.5, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.start();
+        osc.stop(audioContext.currentTime + 0.1);
+
+        setTimeout(() => {
+            d20.remove();
+        }, 3000);
+    }
 });

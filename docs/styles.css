@@ -383,6 +383,125 @@ main {
     }
 }
 
+/* Easter Egg: Waffle Rain */
+.waffle {
+    position: fixed;
+    top: -50px;
+    width: 40px;
+    height: 40px;
+    background: radial-gradient(circle, #f4c542 40%, #e6b800 100%);
+    border: 2px solid #d4a000;
+    border-radius: 50%;
+    z-index: 20;
+    animation: fall linear forwards;
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
+}
+
+.waffle::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 30px;
+    height: 30px;
+    background:
+        linear-gradient(90deg, transparent 45%, #d4a000 45%, #d4a000 55%, transparent 55%),
+        linear-gradient(transparent 45%, #d4a000 45%, #d4a000 55%, transparent 55%);
+    background-size: 10px 10px;
+}
+
+@keyframes fall {
+    to {
+        transform: translateY(110vh) rotate(360deg);
+    }
+}
+
+/* Easter Egg: Screen Shake */
+.shake {
+    animation: shake 0.5s cubic-bezier(.36, .07, .19, .97) both;
+}
+
+@keyframes shake {
+
+    10%,
+    90% {
+        transform: translate3d(-1px, 0, 0);
+    }
+
+    20%,
+    80% {
+        transform: translate3d(2px, 0, 0);
+    }
+
+    30%,
+    50%,
+    70% {
+        transform: translate3d(-4px, 0, 0);
+    }
+
+    40%,
+    60% {
+        transform: translate3d(4px, 0, 0);
+    }
+}
+
+/* Easter Egg: Max's Levitation */
+.levitate {
+    animation: float-up 4s ease-in-out infinite alternate;
+    box-shadow: 0 20px 50px rgba(255, 0, 0, 0.5) !important;
+    border-color: var(--stranger-red) !important;
+    z-index: 20;
+}
+
+@keyframes float-up {
+    0% {
+        transform: translateY(0);
+    }
+
+    100% {
+        transform: translateY(-50px);
+    }
+}
+
+/* Easter Egg: Hellfire Club D20 */
+.d20-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    width: 200px;
+    height: 200px;
+    background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="red"><path d="M50 5 L95 25 L95 75 L50 95 L5 75 L5 25 Z" stroke="black" stroke-width="2"/><text x="50" y="60" font-family="serif" font-size="40" text-anchor="middle" fill="black" font-weight="bold">20</text></svg>') no-repeat center;
+    background-size: contain;
+    z-index: 100;
+    animation: critical-hit 3s ease-out forwards;
+    pointer-events: none;
+    filter: drop-shadow(0 0 20px red);
+}
+
+@keyframes critical-hit {
+    0% {
+        transform: translate(-50%, -50%) scale(0) rotate(0deg);
+        opacity: 0;
+    }
+
+    20% {
+        transform: translate(-50%, -50%) scale(1.5) rotate(720deg);
+        opacity: 1;
+    }
+
+    80% {
+        transform: translate(-50%, -50%) scale(1.5) rotate(720deg);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translate(-50%, -50%) scale(2) rotate(720deg);
+        opacity: 0;
+    }
+}
+
 header {
     margin-bottom: 4rem;
     position: relative;
@@ -585,6 +704,53 @@ header {
     50% {
         opacity: 0;
     }
+}
+
+/* Hints Section */
+.hints-container {
+    margin-top: 2rem;
+    padding: 1rem;
+    border-top: 1px solid #333;
+    color: #444;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    text-align: center;
+    opacity: 0.5;
+    transition: opacity 0.3s;
+}
+
+.hints-container:hover {
+    opacity: 1;
+}
+
+.hint-text {
+    margin-bottom: 0.5rem;
+    color: var(--stranger-red);
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.hint-list {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
+}
+
+.hint-list li {
+    position: relative;
+}
+
+.hint-list li::before {
+    content: '•';
+    color: var(--stranger-red);
+    margin-right: 5px;
+}
+
+.hint-list strong {
+    color: #666;
+    border-bottom: 1px dashed #444;
 }
 
 footer {
