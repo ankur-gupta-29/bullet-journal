@@ -1,4 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js');
+    }
+
     const sporesContainer = document.getElementById('spores');
     const sporeCount = 50;
 

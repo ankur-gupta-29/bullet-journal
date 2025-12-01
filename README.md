@@ -20,24 +20,70 @@
 
 ## 🚀 Installation
 
-### From Source
+### Prerequisites
+
+You need to have **Rust** installed. If you don't have it, install it easily:
+
+- **Linux / macOS**:
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+- **Windows**:
+  Download and run [rustup-init.exe](https://win.rustup.rs/).
+
+### Install `bj`
+
+Once Rust is installed, clone the repo and install:
+
+#### Linux & macOS
 
 ```bash
 # Clone the repository
 git clone https://github.com/ankur-gupta-29/bullet-journal.git
 cd bullet-journal
 
-# Install with cargo
+# Install
 cargo install --path .
 ```
 
-### Quick Alias
+**Add Alias (Recommended):**
 
-For convenience, alias `bullet-journal` to `bj`:
+To use `bj` instead of `bullet-journal`, run the command for your shell:
 
+**Bash:**
 ```bash
-# Add to your .bashrc or .zshrc
-alias bj="bullet-journal"
+echo 'alias bj="bullet-journal"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Zsh (macOS default):**
+```bash
+echo 'alias bj="bullet-journal"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### Windows (PowerShell)
+
+```powershell
+# Clone the repository
+git clone https://github.com/ankur-gupta-29/bullet-journal.git
+cd bullet-journal
+
+# Install
+cargo install --path .
+```
+
+**Add Alias:**
+
+Run this in PowerShell to make the `bj` alias permanent:
+
+```powershell
+# Create profile if it doesn't exist and add alias
+if (!(Test-Path $PROFILE)) { New-Item -Type File -Path $PROFILE -Force }
+Add-Content $PROFILE "`nSet-Alias -Name bj -Value bullet-journal"
+
+# Reload profile
+. $PROFILE
 ```
 
 ## 📖 Usage
